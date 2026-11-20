@@ -290,6 +290,7 @@ static struct {
     int dly_odd;
     float lfo_phase, lfo_phase_inc;      /* the shape LFO */
     int plate_quiet;                     /* samples the plate has been silent, in and out */
+    float live_cutoff;                   /* the filter's cutoff at the block's end, 0..1 (the screen's) */
     float g_eff_l, g_eff_r, g_l, g_r;    /* the filter's coefficients for these cutoffs (-1: none yet) */
     voice_t voices[NUM_VOICES];
     int next_chord_base, cur_base;
@@ -313,6 +314,7 @@ static struct {
 volatile int8_t chd_sounding[4] = {-1, -1, -1, -1};
 volatile uint8_t chd_level[4];
 volatile uint8_t chd_held;
+volatile chd_live_t chd_live;
 
 /* the original's rand() & 0xFFFF and rand(): a generator of its own (the sequence differs, the spread is the same) */
 RAMC static uint32_t rnd(void)
@@ -523,7 +525,7 @@ void chd_morph_view(float idx, float amt, float pidx, float pamt, float *gains, 
 /* ------------------------------------------------------------- parameters --- */
 RAMC static float u01(int v) { return (float)v * 0.0001f; }
 
-RAMC static void set_param(int p, int v)       /* audio interrupt: the original's set_param, for one key */
+RAMC static void set_param_(int p, int v)       /* audio interrupt: the original's set_param, for one key */
 {
     int i;
     if (p < 0 || p >= CP_N)
@@ -665,13 +667,22 @@ RAMC static void set_param(int p, int v)       /* audio interrupt: the original'
     }
 }
 
+RAMC static void revoice(void);
+RAMC static void set_param(int p, int v)
+{
+    set_param_(p, v);
+    if ((p >= CP_CHORD && p <= CP_WAVE4) && p != CP_WIDTH)   /* (the voicing: the chord playing takes it now) */
+        revoice();
+}
+
 RAMC static void patch_apply(const int16_t *p)  /* the original's preset_apply: every value, the source's state cleared */
 {
     int i;
     for (i = 0; i < CP_N; i++)
-        set_param(i, i == CP_ARP_BEATS ? 0 : p[i]);
-    set_param(CP_ARP_BEATS, p[CP_ARP_BEATS]);   /* (after the steps: clamped to them) */
+        set_param_(i, i == CP_ARP_BEATS ? 0 : p[i]);
+    set_param_(CP_ARP_BEATS, p[CP_ARP_BEATS]);   /* (after the steps: clamped to them) */
     S.ctrl_value = S.ctrl_value_target = S.vel_baseline = S.at_smooth = 0.0f;
+    revoice();                            /* (a chord sounding takes the new sound's voicing) */
 }
 
 /* ------------------------------------------------------------------ plate --- */
@@ -896,11 +907,12 @@ RAMC static void voice_start(voice_t *v, int root_note, int interval_semis, floa
     v->env.stage = ENV_ATTACK;
 }
 
-RAMC static void chord_on(int root_note, int velocity)
+/* the chord's four intervals from its root, voice order (the original's chord_on: the type or the intervals or the map,
+ * spread, rotated, snapped to the scale) */
+RAMC static void chord_intervals(int root_note, int *out)
 {
-    int base = S.next_chord_base, chord = S.chord_type, rotation, i, buf[CHORD_SIZE];
+    int chord = S.chord_type, rotation, i, buf[CHORD_SIZE];
     float spread_mult;
-    release_all_voices();
     if (S.tuning_mode == 2) {
         int pc = root_note % 12;
         if (pc < 0)
@@ -923,8 +935,44 @@ RAMC static void chord_on(int root_note, int velocity)
         int src = (i + rotation) % CHORD_SIZE, scaled = (int)((float)buf[src] * spread_mult);
         if (S.scale_index > 0)
             scaled = scale_quantize(root_note + scaled, S.scale_index, S.scale_root) - root_note;
-        voice_start(&S.voices[base + i], root_note, scaled, (float)i * S.detune * MAX_DETUNE_CENTS, velocity, i);
+        out[i] = scaled;
     }
+}
+
+/* a voicing setting turned while a chord sounds: the chord playing takes it now (its pitches, its waves), its
+ * envelopes running on; the original took it at the next chord */
+RAMC static void revoice(void)
+{
+    int iv[CHORD_SIZE], i, root;
+    voice_t *v0 = &S.voices[S.cur_base];
+    for (i = 0; i < NUM_VOICES; i++)       /* every voice sounding, tails too: its wave */
+        if (S.voices[i].active)
+            S.voices[i].waveform = S.waveforms[S.voices[i].chord_step];
+    if (!S.has_prev_chord || !v0->active)
+        return;
+    root = v0->root_note;
+    chord_intervals(root, iv);
+    for (i = 0; i < CHORD_SIZE; i++) {
+        voice_t *v = &S.voices[S.cur_base + i];
+        float hz = midi_to_hz(root + iv[i]), cents = (float)i * S.detune * MAX_DETUNE_CENTS;
+        if (!v->active || v->root_note != root)
+            continue;
+        if (cents != 0.0f)
+            hz *= fm_exp2f(cents / 1200.0f);
+        v->note = root + iv[i];
+        v->target_phase_inc = v->phase_inc = hz / SR;
+        v->glide_step = 0.0f;
+        S.prev_phase_inc[i] = v->target_phase_inc;
+    }
+}
+
+RAMC static void chord_on(int root_note, int velocity)
+{
+    int base = S.next_chord_base, i, iv[CHORD_SIZE];
+    release_all_voices();
+    chord_intervals(root_note, iv);
+    for (i = 0; i < CHORD_SIZE; ++i)
+        voice_start(&S.voices[base + i], root_note, iv[i], (float)i * S.detune * MAX_DETUNE_CENTS, velocity, i);
     S.cur_base = base;
     S.next_chord_base = (base + CHORD_SIZE) % NUM_VOICES;
     for (i = 0; i < CHORD_SIZE; ++i)
@@ -1660,6 +1708,7 @@ RAMC static void seg_out(float *out_l, float *out_r, uint32_t n)   /* pass C */
             }
         }
         lp_mode = S.filter_mode == FILT_LP;
+        S.live_cutoff = eff_l;
         {
             const float max_hz = SR * 0.49f;
             float g_l, g_r;
@@ -1916,6 +1965,29 @@ RAMC static void show(void)                    /* what the screen draws: the cho
         chd_level[i] = (uint8_t)(lv >= 1.0f ? 255 : lv <= 0.0f ? 0 : (int)(lv * 255.0f));
     }
     chd_held = (uint8_t)S.held_count;
+    {   /* what moves, for the pictures and the knobs' dots */
+        chd_live_t *L = (chd_live_t *)&chd_live;
+        for (i = 0; i < CHORD_SIZE; i++) {
+            const voice_t *v = &S.voices[S.cur_base + i];
+            L->gain[i] = S.morph_gains[i];
+            L->pan[i] = clampf(0.5f + ((float)i / 3.0f - 0.5f) * S.width + S.pan_morph_pans[i] * 0.5f, 0.0f, 1.0f);
+            L->shape[i] = clampf(S.shapes[i] + lfo_sample(S.lfo_shape, S.lfo_phase + S.shape_lfo_phase_offsets[i] -
+                                                          fm_floorf(S.lfo_phase + S.shape_lfo_phase_offsets[i])) *
+                                                   S.lfo_depth + S.ctrl_value * S.ctrl_to_shape * 0.5f, 0.0f, 1.0f);
+            L->env[i] = v->active ? v->env.value : 0.0f;
+        }
+        L->lfo = S.lfo_phase;
+        L->flfo = S.filter_lfo_phase;
+        L->alfo = S.amp_lfo_phase;
+        L->vib = S.vibrato_phase;
+        L->lm = S.lm_lfo_phase;
+        L->pm = S.pm_lfo_phase;
+        L->cutoff = S.live_cutoff;
+        L->fenv = S.filter_env.value;
+        L->ctrl = S.ctrl_value;
+        L->arp_pos = (uint8_t)S.arp_pattern_pos;
+        L->seq++;
+    }
 }
 
 #define BLK 128u

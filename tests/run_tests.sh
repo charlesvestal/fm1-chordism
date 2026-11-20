@@ -9,6 +9,7 @@
 set -u
 cd "$(dirname "$0")/.."
 CC="${CC:-cc}"
+[ -x /opt/homebrew/bin/python3.14 ] && export PYTHON="${PYTHON:-/opt/homebrew/bin/python3.14}"   # (the fonts need Pillow with libraqm)
 PY="${PYTHON:-python3}"
 export AC79_SDK="${AC79_SDK:-$HOME/fw-AC79_AIoT_SDK}"   # the package's SDK files, as ./build.sh
 B=app/build

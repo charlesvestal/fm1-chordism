@@ -300,7 +300,7 @@ static void value_text(int k, int v, char *t)
     case CP_FM_MOD: s_cat(num_i(v + 1, s_cat(t, "voice ")), ""); return;
     case CP_FM_POS: s_cat(t, v ? "morph" : "before"); return;
     case CP_DETUNE: s_cat(num_i((v * 50 + 5000) / 10000, t), " ct"); return;
-    case CP_SPREAD: s_cat(num_dec((v * 20 + 5000) / 10000, t), "x"); return;
+    case CP_SPREAD: s_cat(num_i((v * 2 + 50) / 100, t), "%"); return;   /* (100 %: the chord as written) */
     case CP_ROTATION: num_i(v * 4 / 10001, t); return;
     case CP_LFO_SHAPE: case CP_FLFO_SHAPE: case CP_ALFO_SHAPE: case CP_LM_SHAPE: case CP_PM_SHAPE:
         s_cat(t, LSHAPE[v % 4]);

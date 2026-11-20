@@ -1,0 +1,33 @@
+# what you turn, you hear now: the voicing of the chord sounding follows the knobs; the pictures follow what moves
+wait 700
+master 4096
+key 7 down
+wait 300
+expect note3 74
+turn ALGO -1
+wait 100
+expect note3 71
+turn K2 50
+wait 100
+expect note3 >75
+key 7 up
+wait 50
+turn PRESET 3
+wait 300
+key 7 down
+wait 500
+tap ENV
+wait 30
+tap ENV
+wait 300
+shot filter-live.png
+tap LFO
+wait 30
+tap LFO
+wait 30
+tap LFO
+wait 30
+tap LFO
+wait 300
+shot flfo-live.png
+key 7 up

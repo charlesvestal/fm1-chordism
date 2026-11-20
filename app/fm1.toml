@@ -30,3 +30,4 @@ screenshot = "app/docs/img/screen-chord.png"
 ram_code_allow = ["chd_render", "seg_voices"]   # the second core's calls (plat_cpu2_*: fm1-base, in the flash; the
                                # render never runs with the flash off), and CHD_PROF's timer (a measurement build)
 cpu2 = true                    # the second core renders half the voices
+ram_layout = "packed"            # one SRAM budget (fm1-base device/app_packed.ld): the engine in RAM outgrew the fixed 32 KB

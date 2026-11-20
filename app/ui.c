@@ -324,7 +324,10 @@ static void page_go(int p)
             if (PAGE[p].k[i] != K_NONE) {
                 int k = PAGE[p].k[i];
                 value_text(par_of(k), knob_get(k), v);
-                s_put(t, sizeof t, " ", p == P_OSC && i < 2 ? (i ? "shape" : "wave") : knob_name(k), " ", v);
+                const char *kn = p == P_OSC && i < 2 ? (i ? "shape" : "wave") : knob_name(k);
+                if (kn[0] == (PAGE[p].name[0] | 0x20) && s_eq(kn + 1, PAGE[p].name + 1))
+                    kn = "";                       /* (its name is the page's: said once) */
+                s_put(t, sizeof t, " ", kn, *kn ? " " : "", v);
                 s_put(t, sizeof t, ".", 0, 0, 0);
             }
         ann_say(t, 0, ANN_NOW);
@@ -776,6 +779,7 @@ static void draw_tag(void)
 }
 
 /* the four knobs: name, value, a bar in the aurora's green */
+static int knob_live(int k);
 static void draw_knobs(void)
 {
     char v[4][24];
@@ -788,7 +792,7 @@ static void draw_knobs(void)
         v[i][0] = 0;
         if (k != K_NONE)
             value_text(par_of(k), knob_get(k), v[i]);
-        h = hash_s(hash_u(h, (uint32_t)knob_get(k)), v[i]);
+        h = hash_s(hash_u(h, (uint32_t)knob_get(k) ^ (uint32_t)(knob_live(k) + 1) << 16), v[i]);
     }
     if (h == ui.sig[2])
         return;
@@ -815,6 +819,11 @@ static void draw_knobs(void)
             cv_round(cx - 22, 41, 44, 6, 3, K_LINE);
             if (bw > 0)
                 cv_round(cx - 22, 41, bw < 6 ? 6 : bw, 6, 3, i == hot ? K_TEXT : INK[i]);
+            if (k != K_NONE && knob_live(k) >= 0 && span) {   /* moved by the sound now: a dot where it is */
+                int32_t lx = cx - 22 + 38 * (clamp(knob_live(k), lo, hi) - lo) / span;
+                cv_round(lx - 1, 39, 8, 10, 4, K_BG);
+                cv_round(lx, 40, 6, 8, 3, K_TEXT);
+            }
         }
     }
     cv_blit(0, KNB_Y);
@@ -1009,15 +1018,39 @@ static float f_filter(float u, const void *p)    /* the response, log frequency 
     return fm_clampf((db + 6.0f) / 24.0f, -1.0f, 1.0f);
 }
 
+/* the page's picture moves: a voice sounds, or an LFO it shows runs (it is drawn again, ~15 times a second) */
 static int pic_animated(void)
 {
+    const int16_t *p = set.snd.p;
     int pic = PAGE[ui.page].pic;
-    if (pic == PIC_CURTAINS)
+    if (pic == PIC_CURTAINS || pic == PIC_LFO)
         return 1;
     for (int i = 0; i < 4; i++)
         if (chd_level[i])
             return 1;
-    return 0;
+    return (ui.page == P_MORPH && p[CP_LM_DEPTH]) || (ui.page == P_PANM && p[CP_PM_DEPTH]) ||
+           (pic == PIC_WAVE && p[CP_LFO_DEPTH]) || (pic == PIC_FILTER && p[CP_FLFO_DEPTH]);
+}
+
+/* a knob's value now, where the sound moves it (an LFO, an envelope, pressure), in its own units; -1: as set */
+static int knob_live(int k)
+{
+    const volatile chd_live_t *L = &chd_live;
+    float v;
+    switch (k) {
+    case CP_CUTOFF: v = L->cutoff; break;
+    case CP_SHAPE1: case CP_SHAPE2: case CP_SHAPE3: case CP_SHAPE4: v = L->shape[k - CP_SHAPE1]; break;
+    default: return -1;
+    }
+    {
+        int n = (int)(v * 10000.0f + 0.5f);
+        return n - knob_get(k) > 60 || knob_get(k) - n > 60 ? n : -1;   /* (only when it is away from the setting) */
+    }
+}
+static float lfo_phase_of(int page)
+{
+    const volatile chd_live_t *L = &chd_live;
+    return page == P_FLFO ? L->flfo : page == P_TREM ? L->alfo : page == P_VIB ? L->vib : L->lfo;
 }
 
 static void draw_main(void)
@@ -1047,8 +1080,9 @@ static void draw_main(void)
         float idle = pg->pic == PIC_CURTAINS ? 0.18f : 0.0f;
         for (int i = 0; i < 4; i++) {
             float lv = (float)chd_level[i] / 255.0f;
-            curtain(30.0f + 60.0f * (float)i, 46.0f, (pg->pic == PIC_CURTAINS ? 1.0f : 0.35f) * (lv > idle ? lv : idle),
-                    INK[i], tt, (float)i * 0.37f);
+            float x = chd_level[i] ? 30.0f + 180.0f * chd_live.pan[i] : 30.0f + 60.0f * (float)i;   /* (at its place) */
+            curtain(x, 46.0f, (pg->pic == PIC_CURTAINS ? 1.0f : 0.35f) * (lv > idle ? lv : idle), INK[i], tt,
+                    (float)i * 0.37f);
         }
     }
     switch (pg->pic) {
@@ -1059,7 +1093,7 @@ static void draw_main(void)
             if (n >= 0 && chd_level[i]) {
                 char *e = s_cat((t[0] = 0, t), NOTE_NAME[n % 12]);
                 num_i(n / 12 - 1, e);
-                text_c(30 + 60 * i, 102, &FONT_S, t, INK[i]);
+                text_c((int32_t)(30.0f + 180.0f * chd_live.pan[i]), 102, &FONT_S, t, INK[i]);
                 any = 1;
             }
         }
@@ -1097,7 +1131,7 @@ static void draw_main(void)
             a.sh = 0.0f;
         } else {
             a.w = set.snd.p[CP_WAVE1 + v];
-            a.sh = u01v(set.snd.p[CP_SHAPE1 + v]);
+            a.sh = knob_live(CP_SHAPE1 + v) >= 0 ? chd_live.shape[v] : u01v(set.snd.p[CP_SHAPE1 + v]);
         }
         plot(f_wave, &a, 16, 208, 58, 40, INK[v]);
         if (ui.page == P_LOFI && set.snd.p[CP_GRIND] + set.snd.p[CP_DECIM]) {   /* the steps lo-fi leaves */
@@ -1121,6 +1155,14 @@ static void draw_main(void)
         if (ui.page == P_VIB)
             s = 0;
         plot(f_lfo, &s, 16, 208, 58, 38, INK[1]);
+        {   /* where it is now: a dot on each of the two cycles drawn */
+            float ph = lfo_phase_of(ui.page);
+            for (int c = 0; c < 2; c++) {
+                float x = 16.0f + 104.0f * ((float)c + ph), y = 58.0f - 0.9f * lfo_at(s, ph) * 38.0f;
+                cv_dotf(x, y, 6.0f, col_mix(K_BG, INK[0], 7));
+                cv_dotf(x, y, 3.0f, K_TEXT);
+            }
+        }
         break;
     }
     case PIC_ENV: {
@@ -1136,6 +1178,13 @@ static void draw_main(void)
         e.mode = sw ? 0 : set.snd.p[fe ? CP_FENV_MODE : CP_VCA_MODE];
         e.peak = e.a + 0.3f;
         plot(f_env, &e, 16, 208, 60, 42, INK[fe ? 2 : sw ? 3 : 0]);
+        if (!sw)                          /* where each voice's envelope is now (the filter's: one) */
+            for (int i = 0; i < (fe ? 1 : 4); i++) {
+                float v = fe ? chd_live.fenv : chd_live.env[i];
+                if (v > 0.002f) {
+                    cv_rect(226 + 3 * i - (fe ? 3 : 0), (int32_t)(102.0f - v * 84.0f), 2, (int32_t)(v * 84.0f), INK[fe ? 2 : i]);
+                }
+            }
         break;
     }
     case PIC_FILTER: {
@@ -1144,6 +1193,17 @@ static void draw_main(void)
         f.q = 0.5f + 11.5f * u01v(set.snd.p[CP_RESO]);
         f.mode = set.snd.p[CP_FMODE];
         f.slope = set.snd.p[CP_SLOPE];
+        if (knob_live(CP_CUTOFF) >= 0) {   /* moving (an envelope, an LFO, pressure): the setting's curve faint, the
+                                            * cutoff now's bright */
+            float pv = 0.0f, px = 0.0f;
+            for (int32_t i = 0; i <= 208; i += 4) {
+                float v = f_filter((float)i / 208.0f, &f), y = 58.0f - v * 40.0f, x = (float)(16 + i);
+                if (i)
+                    cv_linef(px, pv, x, y, K_FAINT, 1.2f);
+                px = x, pv = y;
+            }
+            f.fc = 20.0f * fm_exp2f(9.96578428f * chd_live.cutoff);
+        }
         plot(f_filter, &f, 16, 208, 58, 40, INK[1]);
         value_text(CP_FMODE, f.mode, t);
         cv_text(10, 100, &FONT_XS, t, K_DIM);
@@ -1182,6 +1242,10 @@ static void draw_main(void)
                 float g[4], pn[4];
                 chd_morph_view(u01v(set.snd.p[CP_MORPH]), u01v(set.snd.p[CP_MORPH_INT]), u01v(set.snd.p[CP_PAN]),
                                u01v(set.snd.p[CP_PAN_INT]), g, pn);
+                if (set.snd.p[CP_LM_DEPTH] || set.snd.p[CP_CT_MORPH])   /* (moving: as it is now) */
+                    g[i] = chd_live.gain[i];
+                if (set.snd.p[CP_PM_DEPTH])
+                    pn[i] = (chd_live.pan[i] - 0.5f - ((float)i / 3.0f - 0.5f) * u01v(set.snd.p[CP_WIDTH])) * 2.0f;
                 if (ui.page == P_PANM) {
                     float px = 120.0f + 100.0f * fm_clampf((float)i / 3.0f - 0.5f + pn[i] * 0.5f, -1.0f, 1.0f);
                     cv_dotf(px, 30.0f + 18.0f * (float)i, 9.0f, col_mix(K_BG, INK[i], 6));
@@ -1207,10 +1271,11 @@ static void draw_main(void)
         int st = set.snd.p[CP_ARP_STEPS], bt = set.snd.p[CP_ARP_BEATS];
         for (int i = 0; i < st; i++) {
             float a = (float)i / (float)st, x = 120.0f + 44.0f * fm_sin_turns(a), y = 56.0f - 44.0f * fm_sin_turns(a + 0.25f);
-            int on = bt == 0 || ((i * bt) % st) < bt;
-            cv_dotf(x, y, on ? 6.0f : 3.0f, on ? col_mix(K_BG, INK[2], 7) : K_LINE);
-            if (on)
-                cv_dotf(x, y, 3.0f, INK[2]);
+            int on = bt == 0 || ((i * bt) % st) < bt, now = set.snd.p[CP_ARP] && chd_held &&
+                                                              i == (chd_live.arp_pos + st - 1) % st;
+            cv_dotf(x, y, now ? 9.0f : on ? 6.0f : 3.0f, now ? col_mix(K_BG, INK[0], 9) : on ? col_mix(K_BG, INK[2], 7) : K_LINE);
+            if (on || now)
+                cv_dotf(x, y, now ? 4.0f : 3.0f, now ? K_TEXT : INK[2]);
         }
         cv_text(10, 4, &FONT_B, set.snd.p[CP_ARP] ? "arp on" : "arp off", set.snd.p[CP_ARP] ? INK[0] : K_DIM);
         break;

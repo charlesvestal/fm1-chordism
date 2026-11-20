@@ -193,3 +193,11 @@ void chd_render(int32_t *lr, uint32_t n, uint32_t gain_q12);
 extern volatile int8_t chd_sounding[4];  /* the chord's notes now (MIDI, -1 none), voice order */
 extern volatile uint8_t chd_level[4];    /* each chord voice's level, 0..255 (its envelope x its mix) */
 extern volatile uint8_t chd_held;        /* keys held (the arp's stack) */
+typedef struct {
+    float gain[4], pan[4], shape[4], env[4];   /* each chord voice: its morph level, its place 0..1, its shape, its env */
+    float lfo, flfo, alfo, vib, lm, pm;       /* the LFOs' phases, 0..1: shape, filter, tremolo, vibrato, morphs */
+    float cutoff, fenv, ctrl;                 /* the filter's cutoff now (0..1), its envelope, the control source */
+    uint8_t arp_pos;                          /* the arp's step in its rhythm */
+    uint32_t seq;                             /* counts the blocks (the screen sees it move) */
+} chd_live_t;
+extern volatile chd_live_t chd_live;     /* what moves now (written each block by the render) */
