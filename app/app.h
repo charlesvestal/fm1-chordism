@@ -37,6 +37,9 @@ void app_frame(void);                    /* the UI: input and a redraw, about 60
 void app_input_only(void);               /* between frames: input only */
 void app_say(const char *a, const char *b);   /* a short message on the screen and to a screen reader */
 
+#define APP_REDRAW                       /* the screen mirror lost a part (or a viewer came): every band again */
+void app_redraw(void);
+
 /* the host simulator's checks (app.c app_expect) */
 #define APP_HOST_EXPECT
 int app_expect(const char *what, int *got);

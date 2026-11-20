@@ -62,6 +62,8 @@ void app_frame(void)
     draw();
 }
 
+void app_redraw(void) { memset(ui.sig, 0, sizeof ui.sig); }   /* (each band's hash forgotten: all drawn again) */
+
 /* ---- the companion: the settings and the user sounds as files */
 int app_file_busy(void) { return 0; }
 void app_file_changed(uint32_t obj)
