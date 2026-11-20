@@ -4,4 +4,3 @@ app/build/
 __pycache__/
 *.o
 .serena/
-app/web/words/
