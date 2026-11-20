@@ -204,16 +204,18 @@ typedef struct { float s[4], g, k, G, c0, c1, c2, c3, inv; } ladder_t;   /* (g..
 #define PS(n) (((n) * 7409 + 5000) / 10000)
 #define P_PRE 662                         /* 30 ms */
 #define P_EXC 10                          /* the tank's modulation, half-rate samples at most */
-enum { L_PRE, L_IN1, L_IN2, L_IN3, L_IN4, L_APL, L_D1L, L_AP2L, L_D2L, L_APR, L_D1R, L_AP2R, L_D2R, L_N };
+enum { L_PRE, L_IN1, L_IN2, L_IN3, L_IN4, L_APL, L_D1L, L_AP2L, L_D2L, L_APR, L_D1R, L_AP2R, L_D2R,
+       L_PRER, L_IN1R, L_IN2R, L_IN3R, L_IN4R, L_N };   /* (the R's: the right channel's own predelay and diffusers) */
 static const int16_t PL_LEN[L_N] = {P_PRE, PS(142), PS(107), PS(379), PS(277), PS(672) + P_EXC + 2, PS(4453), PS(1800),
-                                    PS(3720), PS(908) + P_EXC + 2, PS(4217), PS(2656), PS(3163)};
+                                    PS(3720), PS(908) + P_EXC + 2, PS(4217), PS(2656), PS(3163),
+                                    P_PRE, PS(142), PS(107), PS(379), PS(277)};
 #define PL_TOTAL (P_PRE + PS(142) + PS(107) + PS(379) + PS(277) + PS(672) + PS(4453) + PS(1800) + PS(3720) + PS(908) + \
-                  PS(4217) + PS(2656) + PS(3163) + 2 * (P_EXC + 2))
+                  PS(4217) + PS(2656) + PS(3163) + 2 * (P_EXC + 2) + P_PRE + PS(142) + PS(107) + PS(379) + PS(277))
 typedef struct { float *b; int n, i; } pdl_t;
 typedef struct {
     pdl_t d[L_N];
-    float bw, damp_l, damp_r, lfo_s, lfo_c;
-    float acc, prev_l, prev_r, cur_l, cur_r;
+    float bw, bw_r, damp_l, damp_r, lfo_s, lfo_c;
+    float acc, acc_r, prev_l, prev_r, cur_l, cur_r;
     int odd, sh_i;
     float sh_d, sh_lp, sh_hp, sh_x1;      /* the shimmer: its heads' distance, its lowpass, its highpass */
 } plate_t;
@@ -738,13 +740,19 @@ RAMC static float shimmer(plate_t *P)
     P->sh_x1 = P->sh_lp;
     return P->sh_hp;
 }
-RAMC static void plate_step(plate_t *P, float in, float decay, float dk, float exc, float w, float oct, float *ol,
-                            float *or_)
+/* stereo in (not the paper's, which takes one channel): each channel its own predelay and diffusers, the left
+ * feeding the tank's left half, the right its right; the tank crosses them over, so a sound placed left stays left in
+ * the plate's first moments and spreads as it grows */
+RAMC static void plate_step(plate_t *P, float in, float in_r, float decay, float dk, float exc, float w, float oct,
+                            float *ol, float *or_)
 {
     pdl_t *dl = P->d;
-    float x, a, b, fb_l = tap(&dl[L_D2R], PS(3163)), fb_r = tap(&dl[L_D2L], PS(3720)), s, c;
-    if (oct > 0.0f)
-        in += oct * shimmer(P);
+    float x, xr, a, b, fb_l = tap(&dl[L_D2R], PS(3163)), fb_r = tap(&dl[L_D2L], PS(3720)), s, c;
+    if (oct > 0.0f) {
+        float sh = oct * shimmer(P);
+        in += sh;
+        in_r += sh;
+    }
     dpush(&dl[L_PRE], in);
     x = tap(&dl[L_PRE], P_PRE);
     P->bw += 0.84f * (x - P->bw);
@@ -752,6 +760,13 @@ RAMC static void plate_step(plate_t *P, float in, float decay, float dk, float e
     x = allpass(&dl[L_IN2], PS(107), x, 0.75f);
     x = allpass(&dl[L_IN3], PS(379), x, 0.625f);
     x = allpass(&dl[L_IN4], PS(277), x, 0.625f);
+    dpush(&dl[L_PRER], in_r);
+    xr = tap(&dl[L_PRER], P_PRE);
+    P->bw_r += 0.84f * (xr - P->bw_r);
+    xr = allpass(&dl[L_IN1R], PS(142), P->bw_r, 0.75f);
+    xr = allpass(&dl[L_IN2R], PS(107), xr, 0.75f);
+    xr = allpass(&dl[L_IN3R], PS(379), xr, 0.625f);
+    xr = allpass(&dl[L_IN4R], PS(277), xr, 0.625f);
     s = P->lfo_s + w * P->lfo_c;
     c = P->lfo_c - w * s;
     P->lfo_s = s;
@@ -762,7 +777,7 @@ RAMC static void plate_step(plate_t *P, float in, float decay, float dk, float e
     P->damp_l += dk * (b - P->damp_l);
     b = allpass(&dl[L_AP2L], PS(1800), P->damp_l * decay, 0.5f);
     dpush(&dl[L_D2L], b);
-    a = allpass_mod(&dl[L_APR], (float)PS(908) + exc * c, x + decay * fb_r, -0.7f);
+    a = allpass_mod(&dl[L_APR], (float)PS(908) + exc * c, xr + decay * fb_r, -0.7f);
     dpush(&dl[L_D1R], a);
     b = tap(&dl[L_D1R], PS(4217));
     P->damp_r += dk * (b - P->damp_r);
@@ -1279,7 +1294,7 @@ RAMC void chd_init(void)
         }
         for (i = 0; i < (int)PL_TOTAL; i++)
             pl_buf[i] = 0.0f;
-        plate.bw = plate.damp_l = plate.damp_r = plate.lfo_s = plate.acc = 0.0f;
+        plate.bw = plate.bw_r = plate.damp_l = plate.damp_r = plate.lfo_s = plate.acc = plate.acc_r = 0.0f;
         plate.prev_l = plate.prev_r = plate.cur_l = plate.cur_r = 0.0f;
         plate.lfo_c = 1.0f;
         plate.odd = 0;
@@ -1857,12 +1872,13 @@ RAMC static void seg_plate(float *out_l, float *out_r, uint32_t n)
         } else {
             for (i = 0; i < n; i++) {
                 float dl = out_l[i], dr = out_r[i], rl, rr;
-                P->acc += (dl + dr) * 0.5f;
+                P->acc += dl;
+                P->acc_r += dr;
                 if (P->odd) {                   /* the plate's step: the pair in */
                     P->prev_l = P->cur_l;
                     P->prev_r = P->cur_r;
-                    plate_step(P, P->acc * 0.5f, decay, dk, exc, w, oct, &P->cur_l, &P->cur_r);
-                    P->acc = 0.0f;
+                    plate_step(P, P->acc * 0.5f, P->acc_r * 0.5f, decay, dk, exc, w, oct, &P->cur_l, &P->cur_r);
+                    P->acc = P->acc_r = 0.0f;
                     rl = (P->prev_l + P->cur_l) * 0.5f;
                     rr = (P->prev_r + P->cur_r) * 0.5f;
                 } else {

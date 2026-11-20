@@ -1,0 +1,8 @@
+# the plate's wash under the voices (Wander: the plate at half)
+wait 700
+turn PRESET 37
+wait 300
+key 7 down
+wait 1500
+shot wash.png
+key 7 up

@@ -1089,10 +1089,15 @@ static void draw_main(void)
     ui.sig[1] = h;
     cv_begin(240, MAIN_H, K_BG);
     sky(now);
-    {   /* behind every page: the voices' light, faint, as each voice sounds */
-        float idle = pg->pic == PIC_CURTAINS ? 0.18f : 0.0f;
+    {   /* behind every page: the voices' light, faint, as each voice sounds; the plate's share a wide wash under it
+         * (what is placed, what is spread), the voices dimmed by as much */
+        float idle = pg->pic == PIC_CURTAINS ? 0.18f : 0.0f, wet = u01v(set.snd.p[CP_RV_MIX]), all = 0.0f;
+        for (int i = 0; i < 4; i++)
+            all += (float)chd_level[i] / (255.0f * 4.0f);
+        if (wet > 0.0f && all > 0.0f)
+            curtain(120.0f, 119.0f, (pg->pic == PIC_CURTAINS ? 0.8f : 0.3f) * wet * all, INK[1], tt * 0.6f, 1.7f);
         for (int i = 0; i < 4; i++) {
-            float lv = (float)chd_level[i] / 255.0f;
+            float lv = (float)chd_level[i] / 255.0f * (1.0f - 0.5f * wet);
             float x = chd_level[i] ? 30.0f + 180.0f * chd_live.pan[i] : 30.0f + 60.0f * (float)i;   /* (at its place) */
             curtain(x, 46.0f, (pg->pic == PIC_CURTAINS ? 1.0f : 0.35f) * (lv > idle ? lv : idle), INK[i], tt,
                     (float)i * 0.37f);
