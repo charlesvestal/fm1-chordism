@@ -35,6 +35,8 @@ int main()
         snprintf(buf, sizeof buf, "%d", i);
         api->set_param(in, "preset", buf);
         api->get_param(in, "preset_name", buf, sizeof buf);
+        if (!strcmp(buf, "Gypsy Lead"))               // (renamed: the scale is the Hungarian minor)
+            snprintf(buf, sizeof buf, "Hungarian Lead");
         printf("    {\"%s\", {", buf);
         for (unsigned k = 0; k < sizeof P / sizeof P[0]; k++) {
             api->get_param(in, P[k].key, buf, sizeof buf);

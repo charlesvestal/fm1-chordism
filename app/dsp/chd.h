@@ -198,6 +198,9 @@ typedef struct {
     float lfo, flfo, alfo, vib, lm, pm;       /* the LFOs' phases, 0..1: shape, filter, tremolo, vibrato, morphs */
     float cutoff, fenv, ctrl;                 /* the filter's cutoff now (0..1), its envelope, the control source */
     uint8_t arp_pos;                          /* the arp's step in its rhythm */
+    uint8_t clock_run;                        /* the MIDI clock is running (start / continue came) */
     uint32_t seq;                             /* counts the blocks (the screen sees it move) */
 } chd_live_t;
 extern volatile chd_live_t chd_live;     /* what moves now (written each block by the render) */
+extern volatile uint32_t chd_clock_ticks; /* MIDI clocks in since the last start (the Clock page's tempo) */
+void chd_voicing(int root, int *notes);  /* the chord a key would play now: its four voices' notes (main loop) */

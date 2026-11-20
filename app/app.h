@@ -14,6 +14,7 @@
 #define APP_BTDEV                        /* Bluetooth MIDI devices (lib/btdev.h) */
 #define APP_BLE_AT_BOOT (!chd_ble_off())  /* Bluetooth at power-on: as the player left it (REC held) */
 int chd_ble_off(void);
+int chd_midi_in_ch(void);               /* Setup's MIDI page: 0 any channel, else 1..16 */
 
 /* the store: the settings (the sound playing, the player's choices), the panel calibration (the platform's), Bluetooth's
  * address and pairing, and the user sounds, eight to an object, in the data area (0x97000..) */

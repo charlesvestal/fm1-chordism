@@ -6,19 +6,23 @@
 # branch of origin, replacing what was there.
 #   tools/publish_pages.sh 0.9
 #   tools/publish_pages.sh 0.9 app/build/chordism-0.9.fwsc   (a package made elsewhere, the release's attested
-#                                                               one: the site from it, no lchordisml release build)
+#                                                               one: the site from it, no local release build)
 set -e
 cd "$(dirname "$0")/.."
 V="${1:?usage: tools/publish_pages.sh VERSION [PACKAGE]}"
 export JIELI_TOOLCHAIN="${JIELI_TOOLCHAIN:-$HOME/.jieli/toolchain}"   # (as build.sh)
 export AC79_SDK="${AC79_SDK:-$HOME/fw-AC79_AIoT_SDK}"
-[ -n "${2:-}" ] || exec sh base/tools/publish_site.sh app "$V"
-# as base/tools/publish_site.sh, with the package given
+PY="${PYTHON:-python3}"
+if [ -z "${2:-}" ]; then                    # (no package: this release built here)
+    sh build.sh --release "$V"
+    set -- "$1" "app/build/chordism-$V.fwsc"
+fi
+# as base/tools/publish_site.sh, then every page in Chordism's colors (tools/dress.py)
 PKG="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
 [ -f "$PKG" ] || { echo "publish_pages.sh: no package $2"; exit 1; }
-PY="${PYTHON:-python3}"
 "$PY" base/tools/build.py app --web --release "$V"
 "$PY" base/tools/make_site.py app "$PKG" "$V" app/build/site
+"$PY" tools/dress.py app/build/site
 REMOTE="$(git remote get-url origin)"
 SHA="$(git rev-parse --short HEAD)"
 cd app/build/site

@@ -10,6 +10,7 @@
   "install": "https://charlesvestal.github.io/fm1-chordism/install/",
   "site": "https://charlesvestal.github.io/fm1-chordism/",
   "source": "https://github.com/charlesvestal/fm1-chordism",
+  "screenshot": "app/docs/img/screen-chord.png",
   "hardware": {
     "models": ["FM-1"],
     "flash": ["856014", "B36014"],

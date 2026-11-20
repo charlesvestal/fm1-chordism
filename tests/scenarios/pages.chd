@@ -1,0 +1,66 @@
+# EDIT: a voice at a time (PRESET picks it); the LFOs' depth and where they act; values in their own units
+wait 700
+turn PRESET 1
+wait 300
+key 7 down
+wait 400
+tap EDIT
+wait 200
+shot osc-all.png
+turn PRESET 2
+wait 200
+expect parwave_2 1
+shot osc-v2.png
+turn K1 1
+wait 100
+expect parwave_2 2
+expect parwave_1 1
+turn PRESET -2
+wait 100
+turn K1 -1
+wait 100
+expect parwave_1 0
+expect parwave_4 0
+tap LFO
+wait 300
+shot slfo.png
+tap LFO
+wait 300
+shot vib.png
+tap LFO
+tap LFO
+wait 300
+shot flfo.png
+tap HOME
+tap HOME
+wait 50
+turn K1 1
+wait 100
+expect parchord_rotation 2501
+tap GLO
+wait 300
+shot morph.png
+key 7 up
+# HOME's SEL: the sounds by name; each turn plays the next
+tap HOME
+wait 50
+tap SEL
+wait 100
+expect list 2
+expect sound 2
+turn SELECT 1
+wait 100
+expect sound 3
+tap SEL
+wait 50
+expect list 0
+# SAVE held: the slots; a white key keeps the sound there, and letting go then saves nothing more
+press SAVE
+wait 400
+key 0 down
+wait 50
+key 0 up
+expect user0 1
+expect sound 57
+release SAVE
+wait 50

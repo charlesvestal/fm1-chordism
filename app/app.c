@@ -22,8 +22,13 @@ void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
 {
     uint32_t pkt;
     int port;
-    while (plat_midi_in(&pkt, &port))    /* MIDI in: notes, pressure, CCs, the clock (USB, Bluetooth, TRS) */
-        PLAT_FAR(chd_midi)((pkt >> 8) & 0xFFu, (pkt >> 16) & 0x7Fu, pkt >> 24);
+    while (plat_midi_in(&pkt, &port)) {  /* MIDI in: notes, pressure, CCs, the clock (USB, Bluetooth, TRS); a channel's
+                                          * messages only on that channel (Setup's MIDI page), the clock always */
+        uint32_t st = (pkt >> 8) & 0xFFu;
+        if (st < 0xF0u && chd_midi_in_ch() && (st & 15u) != (uint32_t)(chd_midi_in_ch() - 1))
+            continue;
+        PLAT_FAR(chd_midi)(st, (pkt >> 16) & 0x7Fu, pkt >> 24);
+    }
     PLAT_FAR(chd_render)(lr, n, master_q12);   /* (the engine runs from RAM: a pointer reaches it) */
 }
 
@@ -34,6 +39,7 @@ void app_ui_init(void)
     touch_on(1);                         /* velocity and pressure: the keys' readings on */
     lcd_fill(0, 0, 240, 240, K_BG);
     ui.page = P_CHORD;
+    ui.last_note = -1;
     for (int b = 0; b < NB; b++) {
         int first;
         page_n(b, &first);

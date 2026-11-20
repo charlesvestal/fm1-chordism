@@ -73,14 +73,14 @@ static const int8_t SCALE_TABLE[CHD_NSCALE][MAX_SCALE_NOTES + 1] = {
     {0, 2, 5, 7, 10, 0, 0, 0, 0, 0, 0, 0, 5},   /* Slendro */
     {0, 2, 3, 7, 8, 10, 0, 0, 0, 0, 0, 0, 6},   /* Folk */
     {0, 1, 5, 7, 8, 0, 0, 0, 0, 0, 0, 0, 5},    /* Japanese */
-    {0, 2, 3, 6, 7, 8, 11, 0, 0, 0, 0, 0, 7},   /* Gypsy */
+    {0, 2, 3, 6, 7, 8, 11, 0, 0, 0, 0, 0, 7},   /* Hungarian minor (the original's "Gypsy") */
     {0, 1, 3, 4, 5, 7, 8, 11, 0, 0, 0, 0, 8},   /* Flamenco */
     {0, 2, 4, 6, 8, 10, 0, 0, 0, 0, 0, 0, 6},   /* Whole tone */
 };
 const char *const CHD_SCALE_NAME[CHD_NSCALE] = {
     "Chromatic", "Major", "Minor", "Harm minor", "Pent major", "Pent minor", "Diminished", "Dorian", "Phrygian",
     "Lydian", "Mixolydian", "Locrian", "Blues major", "Blues minor", "Arabic", "Arabic mix", "Hijaz", "Iwato", "Pelog",
-    "Slendro", "Folk", "Japanese", "Gypsy", "Flamenco", "Whole tone"};
+    "Slendro", "Folk", "Japanese", "Hungarian minor", "Flamenco", "Whole tone"};
 
 const int8_t CHD_CHORD_TABLE[CHD_NCHORD][CHORD_SIZE] = {
     {0, 12, 24, 36}, {0, 7, 12, 19}, {0, 3, 7, 12}, {0, 3, 7, 10}, {0, 3, 7, 14}, {0, 3, 7, 17},
@@ -226,6 +226,8 @@ typedef struct {
     float phase, phase_inc, target_phase_inc, glide_step, velocity, pan_offset;
     env_t env;
     float g_l, g_r;                      /* the block's gain into each side (velocity, morph, mix, pan) */
+    float g0_l, g0_r;                    /* the gain it had at the last segment's end: a change glides over the next
+                                          * (a stolen voice's level and place, the morphs' blocks), no step */
 } voice_t;
 
 static float pl_buf[PL_TOTAL] CHD_POOL;
@@ -317,6 +319,7 @@ volatile int8_t chd_sounding[4] = {-1, -1, -1, -1};
 volatile uint8_t chd_level[4];
 volatile uint8_t chd_held;
 volatile chd_live_t chd_live;
+volatile uint32_t chd_clock_ticks;         /* MIDI clocks in (0xF8) since the last start */
 
 /* the original's rand() & 0xFFFF and rand(): a generator of its own (the sequence differs, the spread is the same) */
 RAMC static uint32_t rnd(void)
@@ -888,14 +891,16 @@ RAMC static void voice_gains(voice_t *v)       /* its pan and gain for the block
 RAMC static void voice_start(voice_t *v, int root_note, int interval_semis, float detune_cents, int velocity, int step)
 {
     float hz = midi_to_hz(root_note + interval_semis), target_inc;
-    int glide_active;
+    int glide_active, was = v->active && v->env.value >= 0.001f;   /* (stealing a voice still sounding) */
     v->active = 1;
     v->gate = 1;
     v->root_note = root_note;
     v->note = root_note + interval_semis;
     v->chord_step = step;
     v->waveform = S.waveforms[step];
-    v->phase = 0.0f;
+    if (!was)                             /* (a voice still sounding, stolen: its phase goes on, the wave continuous, no
+                                           * click; the original started it at 0) */
+        v->phase = 0.0f;
     if (detune_cents != 0.0f)
         hz *= fm_exp2f(detune_cents / 1200.0f);
     target_inc = hz / SR;
@@ -916,6 +921,10 @@ RAMC static void voice_start(voice_t *v, int root_note, int interval_semis, floa
     v->velocity = (float)velocity / 127.0f;
     v->pan_offset = (float)step / (float)(CHORD_SIZE - 1) - 0.5f;
     voice_gains(v);                       /* (the arp starts chords inside a block) */
+    if (!was) {                           /* (a silent voice starts at its gain; a stolen one glides to it) */
+        v->g0_l = v->g_l;
+        v->g0_r = v->g_r;
+    }
     env_recompute_rates(&v->env, S.attack, S.release);
     if (S.vca_hard_reset)
         v->env.value = 0.0f;
@@ -981,9 +990,38 @@ RAMC static void revoice(void)
     }
 }
 
+/* the screen's: the chord a key would play (its four voices' notes), as the render would build it now */
+RAMC void chd_voicing(int root, int *notes)
+{
+    int iv[CHORD_SIZE], i;
+    chord_intervals(root, iv);
+    for (i = 0; i < CHORD_SIZE; i++)
+        notes[i] = root + iv[i];
+}
+
 RAMC static void chord_on(int root_note, int velocity)
 {
     int base = S.next_chord_base, i, iv[CHORD_SIZE];
+    {   /* the bank: the next in turn, unless it still sounds: then the quietest of the others (the original took the
+         * next in turn, a tail cut short) */
+        float lo = 2.0f;
+        int b, k;
+        for (k = 0; k < NUM_VOICES / CHORD_SIZE; k++) {
+            float loud = 0.0f;
+            b = (S.next_chord_base + k * CHORD_SIZE) % NUM_VOICES;
+            if (b == S.cur_base && S.has_prev_chord)
+                continue;
+            for (i = 0; i < CHORD_SIZE; i++)
+                if (S.voices[b + i].active && S.voices[b + i].env.value > loud)
+                    loud = S.voices[b + i].env.value;
+            if (loud < 0.001f) {
+                base = b;
+                break;
+            }
+            if (loud < lo)
+                lo = loud, base = b;
+        }
+    }
     release_all_voices();
     chord_intervals(root_note, iv);
     for (i = 0; i < CHORD_SIZE; ++i)
@@ -1108,6 +1146,7 @@ RAMC void chd_midi(uint32_t raw, uint32_t d1, uint32_t d2)   /* the original's o
     d1 &= 0x7Fu;
     d2 &= 0x7Fu;
     if (raw == 0xF8u) {                   /* MIDI clock: the arp, synced */
+        chd_clock_ticks++;
         static const int CLOCKS_PER_STEP[6] = {24, 16, 12, 8, 6, 3};
         if (S.arp_enabled && S.arp_clock_sync && S.arp_clock_running && S.held_count > 0) {
             if (++S.arp_clock_count >= CLOCKS_PER_STEP[S.arp_clock_division < 6 ? S.arp_clock_division : 5]) {
@@ -1118,6 +1157,7 @@ RAMC void chd_midi(uint32_t raw, uint32_t d1, uint32_t d2)   /* the original's o
         return;
     }
     if (raw == 0xFAu) {
+        chd_clock_ticks = 0;
         S.arp_clock_running = 1;
         S.arp_clock_count = 0;
         return;
@@ -1521,7 +1561,8 @@ RAMC static void seg_voice(voice_t *v, uint32_t n, int mod, const int *rows, int
     float value = v->env.value, ainc = v->env.attack_inc, rcoef = v->env.release_coef;
     float phase = v->phase, pinc = v->phase_inc, gstep = v->glide_step, tgt = v->target_phase_inc;
     float shp = S.shapes[step], off = S.shape_lfo_phase_offsets[step], ldep = S.lfo_depth, fma = S.fm_amounts[step];
-    float gl = v->g_l, gr = v->g_r, mg = S.morph_gains[step] * S.mixer_trims[step];
+    float gl = v->g0_l, gr = v->g0_r, mg = S.morph_gains[step] * S.mixer_trims[step];
+    float dgl = (v->g_l - gl) / (float)n, dgr = (v->g_r - gr) / (float)n;   /* (0 when nothing changed: the same sums) */
     const float *rat = ri ? sg_rat[ri - 1] : 0;
     int moving = ldep != 0.0f || S.ctrl_to_shape != 0.0f;   /* (else the shape stays: worked out once) */
     float eff_shape = clampf(shp, 0.0f, 1.0f);
@@ -1590,11 +1631,15 @@ RAMC static void seg_voice(voice_t *v, uint32_t n, int mod, const int *rows, int
             sg_moda[mod][i] = 1;
         }
         s *= drone ? 1.0f : value;
+        gl += dgl;
+        gr += dgr;
         ol[i] += s * gl;
         or_[i] += s * gr;
     }
     v->env.stage = stage;
     v->env.value = value;
+    v->g0_l = v->g_l;
+    v->g0_r = v->g_r;
     v->phase = phase;
     v->phase_inc = pinc;
     v->glide_step = gstep;
@@ -2002,6 +2047,7 @@ RAMC static void show(void)                    /* what the screen draws: the cho
         L->fenv = S.filter_env.value;
         L->ctrl = S.ctrl_value;
         L->arp_pos = (uint8_t)S.arp_pattern_pos;
+        L->clock_run = S.arp_clock_running;
         L->seq++;
     }
 }
