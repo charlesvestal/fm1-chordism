@@ -3,7 +3,7 @@
 /* Chordism's engine (chd.h): schwung-chordism's src/dsp/chordism_plugin.cpp in C, step for step, with the FM-1's
  * changes:
  *   - fm1-base's fastmath for libm (single precision, no double);
- *   - the delay at half rate in 16 bits (the original's two 65536-float lines are 512 KB; these are 128 KB): its
+ *   - the delay at half rate in half floats (the original's two 65536-float lines are 512 KB; these are 128 KB): its
  *     line runs every other sample on the pair's average, and the repeats are drawn between its steps;
  *   - the work that depends only on the block hoisted out of the sample loop (each voice's pan and gain, the
  *     vibrato's ratio once a sample);
@@ -162,7 +162,6 @@ static const float LEVEL_MORPH_LUT[NUM_LEVEL_MORPHS][CHORD_SIZE] = {
 /* the delay: the original's line at half the rate (DLY_SIZE half-rate samples: 1.486 s), 16 bits */
 #define DLY_SIZE 32768
 #define DLY_MASK (DLY_SIZE - 1)
-#define DLY_SCALE 4096.0f                /* +-8 full scale: room for feedback's build-up */
 #define DELAY_TIME_MIN_S 0.005f
 #define DELAY_TIME_MAX_S 1.4f
 #define DELAY_FEEDBACK_MAX 0.95f
@@ -215,7 +214,8 @@ typedef struct {
     pdl_t d[L_N];
     float bw, damp_l, damp_r, lfo_s, lfo_c;
     float acc, prev_l, prev_r, cur_l, cur_r;
-    int odd;
+    int odd, sh_i;
+    float sh_d, sh_lp, sh_hp, sh_x1;      /* the shimmer: its heads' distance, its lowpass, its highpass */
 } plate_t;
 typedef struct { int stage; float value, attack_inc, release_coef; } env_t;
 typedef struct {
@@ -227,8 +227,10 @@ typedef struct {
 } voice_t;
 
 static float pl_buf[PL_TOTAL] CHD_POOL;
+#define SH_W 2048                         /* the shimmer's window, half-rate samples (93 ms) */
+static float sh_buf[SH_W] CHD_POOL;       /* the plate's output, for the shimmer's heads */
 static plate_t plate;
-static int16_t dly_l[DLY_SIZE] CHD_POOL, dly_r[DLY_SIZE] CHD_POOL;
+static uint16_t dly_l[DLY_SIZE] CHD_POOL, dly_r[DLY_SIZE] CHD_POOL;   /* (half floats: f2h, h2f) */
 
 static struct {
     int16_t par[CP_N];
@@ -261,7 +263,7 @@ static struct {
     int vca_mode, vca_hard_reset, vca_drone, fenv_mode, fenv_hard_reset, quality_position;
     float reverb_shimmer, reverb_lowcut, reverb_size, reverb_mod_rate, reverb_mod_depth, reverb_hp_l, reverb_hp_r;
     float delay_mod_depth;
-    float delay_grain_phase;
+    float delay_grain_phase, dly_ps_l, dly_ps_r;   /* the shifter's heads, its lowpass */
     float lfo_rate, lfo_depth;
     int lfo_shape, chord_type;
     float detune, width, vib_speed, vib_depth, vib_delay, sweep_amount, sweep_rate;
@@ -699,10 +701,39 @@ RAMC static float allpass_mod(pdl_t *d, float len, float x, float g)
 }
 /* one half-rate step: in, the tank's gain (decay), the damping's and the bandwidth's coefficients, the modulation's
  * depth and its turn a step (rad) */
-RAMC static void plate_step(plate_t *P, float in, float decay, float dk, float exc, float w, float *ol, float *or_)
+/* the shimmer (not the original's: its "shimmer" only deepened the chorus): the plate's own output an octave up, fed
+ * back into its input, so the tail rises in octaves. Two heads half a window apart, crossfading */
+RAMC static float shimmer(plate_t *P)
+{
+    float d1, d2, g1, a, b;
+    int i, k;
+    P->sh_d -= 1.0f;                      /* (an octave: the heads gain a sample a step on the writing) */
+    if (P->sh_d < 2.0f)
+        P->sh_d += (float)(SH_W - 4);
+    d1 = P->sh_d;
+    d2 = d1 + (float)(SH_W / 2 - 2);
+    if (d2 >= (float)(SH_W - 2))
+        d2 -= (float)(SH_W - 4);
+    g1 = 1.0f - fm_fabsf(2.0f * (d1 - 2.0f) / (float)(SH_W - 4) - 1.0f);
+    k = (int)d1;
+    i = (P->sh_i - k) & (SH_W - 1);
+    a = sh_buf[i];
+    k = (int)d2;
+    i = (P->sh_i - k) & (SH_W - 1);
+    b = sh_buf[i];
+    P->sh_lp += 0.5f * (a * g1 + b * (1.0f - g1) - P->sh_lp);   /* (its top end softened: the octaves stay sweet) */
+    P->sh_hp = 0.97f * (P->sh_hp + P->sh_lp - P->sh_x1);         /* (and its bottom cut, ~100 Hz: no rumble builds up
+                                                                    * in the loop) */
+    P->sh_x1 = P->sh_lp;
+    return P->sh_hp;
+}
+RAMC static void plate_step(plate_t *P, float in, float decay, float dk, float exc, float w, float oct, float *ol,
+                            float *or_)
 {
     pdl_t *dl = P->d;
     float x, a, b, fb_l = tap(&dl[L_D2R], PS(3163)), fb_r = tap(&dl[L_D2L], PS(3720)), s, c;
+    if (oct > 0.0f)
+        in += oct * shimmer(P);
     dpush(&dl[L_PRE], in);
     x = tap(&dl[L_PRE], P_PRE);
     P->bw += 0.84f * (x - P->bw);
@@ -732,6 +763,10 @@ RAMC static void plate_step(plate_t *P, float in, float decay, float dk, float e
     *or_ = 0.6f * (tap(&dl[L_D1L], PS(353)) + tap(&dl[L_D1L], PS(3627)) - tap(&dl[L_AP2L], PS(1228)) +
                    tap(&dl[L_D2L], PS(2673)) - tap(&dl[L_D1R], PS(2111)) - tap(&dl[L_AP2R], PS(335)) -
                    tap(&dl[L_D2R], PS(121)));
+    if (oct > 0.0f) {
+        sh_buf[P->sh_i] = (*ol + *or_) * 0.5f;
+        P->sh_i = (P->sh_i + 1) & (SH_W - 1);
+    }
 }
 /* ------------------------------------------------------------ oscillators --- */
 RAMC static float wavefold(float x)
@@ -1200,12 +1235,51 @@ RAMC void chd_init(void)
         plate.prev_l = plate.prev_r = plate.cur_l = plate.cur_r = 0.0f;
         plate.lfo_c = 1.0f;
         plate.odd = 0;
+        plate.sh_i = 0;
+        plate.sh_d = (float)(SH_W / 2);
+        plate.sh_lp = plate.sh_hp = plate.sh_x1 = 0.0f;
+        for (i = 0; i < SH_W; i++)
+            sh_buf[i] = 0.0f;
     }
     for (i = 0; i < DLY_SIZE; i++)
         dly_l[i] = dly_r[i] = 0;
 }
 
 /* ------------------------------------------------------------------ delay --- */
+/* the line's samples as half-precision floats in 16 bits (11 bits of precision at every level: a quiet tail keeps
+ * them, where fixed 16 bits left it a few). Below 6e-5 (-84 dB) a sample is 0 */
+RAMC static uint16_t f2h(float f)
+{
+    union { float f; uint32_t u; } b;
+    uint32_t sign, e, m;
+    b.f = f;
+    sign = (b.u >> 16) & 0x8000u;
+    b.u += 0x1000u;                       /* (round the mantissa to 10 bits) */
+    e = (b.u >> 23) & 0xFFu;
+    m = (b.u >> 13) & 0x3FFu;
+    if (e < 113u)
+        return (uint16_t)sign;
+    if (e > 142u)
+        return (uint16_t)(sign | 0x7BFFu);
+    return (uint16_t)(sign | (e - 112u) << 10 | m);
+}
+RAMC static float h2f(uint16_t h)
+{
+    union { float f; uint32_t u; } b;
+    if (!(h & 0x7FFFu))
+        return 0.0f;
+    b.u = (uint32_t)(h & 0x8000u) << 16 | (((uint32_t)h >> 10 & 31u) + 112u) << 23 | (uint32_t)(h & 0x3FFu) << 13;
+    return b.f;
+}
+/* the pitch shifter of Zenith and Interval: the line read PS_W behind the echo's tap and less, two heads half a window
+ * apart crossfading, their distance closing at the shift's rate (each repeat shifted again) */
+#define PS_W 1024
+RAMC static float shift_read(const uint16_t *buf, int at, float d)
+{
+    int k = (int)d;
+    float f = d - (float)k, a = h2f(buf[(at - k) & DLY_MASK]), b = h2f(buf[(at - k - 1) & DLY_MASK]);
+    return a + (b - a) * f;
+}
 /* one step of the original's delay at half the rate: in, the pair's average; out, the repeats */
 RAMC static void delay_step(float in_l, float in_r, float *o_l, float *o_r)
 {
@@ -1214,11 +1288,11 @@ RAMC static void delay_step(float in_l, float in_r, float *o_l, float *o_r)
     float wet_l, wet_r, lp, k, fb, out_l, out_r;
     if (ds < 1)
         ds = 1;
-    if (ds >= DLY_SIZE)
-        ds = DLY_SIZE - 1;
+    if (ds >= DLY_SIZE - PS_W - 2)
+        ds = DLY_SIZE - PS_W - 2;
     rd = (w - ds) & DLY_MASK;
-    wet_l = (float)dly_l[rd] * (1.0f / DLY_SCALE);
-    wet_r = (float)dly_r[rd] * (1.0f / DLY_SCALE);
+    wet_l = h2f(dly_l[rd]);
+    wet_r = h2f(dly_r[rd]);
     lp = 0.05f + S.delay_tone * 0.95f;
     k = 1.0f - (1.0f - lp) * (1.0f - lp);   /* two of the original's steps in one */
     S.delay_lp_l = k * wet_l + (1.0f - k) * S.delay_lp_l;
@@ -1247,14 +1321,27 @@ RAMC static void delay_step(float in_l, float in_r, float *o_l, float *o_r)
         break;
     case DELAY_ZENITH:
     case DELAY_INTERVAL: {
+        /* (the original read the line at a jump each sample: fragments, not a shift. Here a shifter: the repeats
+         * Zenith an octave up, Interval by its setting, each one again) */
         float semis = S.delay_mode == DELAY_ZENITH ? 12.0f : S.delay_mod_depth * 24.0f - 12.0f;
-        int at;
-        S.delay_grain_phase += 2.0f * (fm_exp2f(semis / 12.0f) - 1.0f);   /* (two samples a step) */
-        at = (w - ds + (int)(S.delay_grain_phase * (float)ds * 0.5f)) & DLY_MASK;
-        in_l += (float)dly_l[at] * (1.0f / DLY_SCALE) * fb;
-        in_r += (float)dly_r[at] * (1.0f / DLY_SCALE) * fb;
-        if (S.delay_grain_phase > 4.0f || S.delay_grain_phase < -4.0f)
-            S.delay_grain_phase = 0.0f;
+        float d1, d2, g1, sl, sr;
+        int at = (w - ds) & DLY_MASK;
+        S.delay_grain_phase -= fm_exp2f(semis / 12.0f) - 1.0f;   /* (the heads' distance behind the tap, closing) */
+        if (S.delay_grain_phase < 0.0f)
+            S.delay_grain_phase += (float)PS_W;
+        if (S.delay_grain_phase >= (float)PS_W)
+            S.delay_grain_phase -= (float)PS_W;
+        d1 = S.delay_grain_phase;
+        d2 = d1 + (float)(PS_W / 2);
+        if (d2 >= (float)PS_W)
+            d2 -= (float)PS_W;
+        g1 = 1.0f - fm_fabsf(2.0f * d1 / (float)PS_W - 1.0f);   /* (a triangle: 0 at the window's ends) */
+        sl = shift_read(dly_l, at, d1) * g1 + shift_read(dly_l, at, d2) * (1.0f - g1);
+        sr = shift_read(dly_r, at, d1) * g1 + shift_read(dly_r, at, d2) * (1.0f - g1);
+        S.dly_ps_l = k * sl + (1.0f - k) * S.dly_ps_l;          /* (the tone's lowpass on the shifted repeats too) */
+        S.dly_ps_r = k * sr + (1.0f - k) * S.dly_ps_r;
+        in_l += S.dly_ps_l * fb;
+        in_r += S.dly_ps_r * fb;
         break;
     }
     default:
@@ -1262,11 +1349,8 @@ RAMC static void delay_step(float in_l, float in_r, float *o_l, float *o_r)
         in_r += S.delay_lp_r * fb;
         break;
     }
-    {
-        float a = clampf(in_l * DLY_SCALE, -32767.0f, 32767.0f), b = clampf(in_r * DLY_SCALE, -32767.0f, 32767.0f);
-        dly_l[w] = (int16_t)(a < 0.0f ? a - 0.5f : a + 0.5f);
-        dly_r[w] = (int16_t)(b < 0.0f ? b - 0.5f : b + 0.5f);
-    }
+    dly_l[w] = f2h(in_l);
+    dly_r[w] = f2h(in_r);
     S.delay_write_idx = (w + 1) & DLY_MASK;
     *o_l = out_l;
     *o_r = out_r;
@@ -1705,6 +1789,8 @@ RAMC static void seg_plate(float *out_l, float *out_r, uint32_t n)
         float decay = 0.45f + S.reverb_decay * 0.34f + S.reverb_size * 0.11f, mix = S.reverb_mix, peak = 0.0f, inpk = 0.0f;
         float dk = 1.0f - S.reverb_damp * S.reverb_damp;   /* (the original's damping, two of its steps in one) */
         float exc = 0.5f * (3.0f + S.reverb_shimmer * 9.0f + S.reverb_mod_depth * 6.0f);
+        float oct = S.reverb_shimmer > 0.5f ? (S.reverb_shimmer - 0.5f) * 0.7f : 0.0f;   /* (the knob's upper half:
+                                                                                              * octaves, up to 0.35) */
         float w = 6.2831853f * (0.4f + S.reverb_mod_rate * 2.5f) / (SR * 0.5f);
         if (decay > 0.92f)
             decay = 0.92f;
@@ -1726,7 +1812,7 @@ RAMC static void seg_plate(float *out_l, float *out_r, uint32_t n)
                 if (P->odd) {                   /* the plate's step: the pair in */
                     P->prev_l = P->cur_l;
                     P->prev_r = P->cur_r;
-                    plate_step(P, P->acc * 0.5f, decay, dk, exc, w, &P->cur_l, &P->cur_r);
+                    plate_step(P, P->acc * 0.5f, decay, dk, exc, w, oct, &P->cur_l, &P->cur_r);
                     P->acc = 0.0f;
                     rl = (P->prev_l + P->cur_l) * 0.5f;
                     rr = (P->prev_r + P->cur_r) * 0.5f;
