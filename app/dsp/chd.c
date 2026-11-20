@@ -299,6 +299,7 @@ static struct {
     voice_t voices[NUM_VOICES];
     int next_chord_base, cur_base;
     int held_notes[HELD_STACK_MAX], held_count;
+    uint32_t down[4];                         /* the notes whose key is down (held_notes keeps let-go ones under hold) */
     float aftertouch;
     float glide_rate;
     int glide_legato;
@@ -443,6 +444,18 @@ RAMC static void sweep_recompute(void)
     if (samples < 1.0f)
         samples = 1.0f;
     S.sweep_coef = fm_expf(-5.0f / samples);
+}
+RAMC static void release_all_voices(void);
+/* hold or the arp off: the keys let go meanwhile leave the stack, and nothing held, the chord is released */
+RAMC static void keys_let_go(void)
+{
+    int i, n = 0;
+    for (i = 0; i < S.held_count; i++)
+        if (S.down[S.held_notes[i] >> 5] >> (S.held_notes[i] & 31) & 1u)
+            S.held_notes[n++] = S.held_notes[i];
+    S.held_count = n;
+    if (!n)
+        release_all_voices();
 }
 static const int CLOCKS_PER_STEP[6] = {24, 16, 12, 8, 6, 3};   /* 1/4, 1/4T, 1/8, 1/8T, 1/16, 1/32 */
 /* the arp's own clock: the original's step (a step each beat of the tempo) is the eighth note here, so the division
@@ -651,12 +664,18 @@ RAMC static void set_param_(int p, int v)       /* audio interrupt: the original
     case CP_DL_SHIFT: S.delay_mod_depth = u01(v); break;
     case CP_ARP:
         S.arp_enabled = v;
-        if (!v)
+        if (!v) {
             S.arp_sample_counter = 0;
+            keys_let_go();
+        }
         break;
     case CP_ARP_TEMPO: S.arp_tempo = u01(v); arp_recompute(); break;
     case CP_ARP_DIR: S.arp_direction = v; S.arp_step_dir = 1; break;
-    case CP_ARP_HOLD: S.arp_hold = v; break;
+    case CP_ARP_HOLD:
+        S.arp_hold = v;
+        if (!v)
+            keys_let_go();
+        break;
     case CP_ARP_STEPS: S.arp_euclid_steps = v; arp_euclid_recompute(); break;
     case CP_ARP_BEATS: S.arp_euclid_beats = v; arp_euclid_recompute(); break;
     case CP_ARP_VINT: S.arp_variation_interval = v; break;
@@ -1060,19 +1079,6 @@ RAMC static void chord_on(int root_note, int velocity)
     }
 }
 
-RAMC static void chord_off(int root_note)
-{
-    int i;
-    for (i = 0; i < NUM_VOICES; ++i) {
-        voice_t *v = &S.voices[i];
-        if (v->active && v->root_note == root_note) {
-            v->gate = 0;
-            if (v->env.stage == ENV_HOLD)
-                v->env.stage = ENV_RELEASE;
-        }
-    }
-}
-
 RAMC static void held_push(int note)
 {
     int i, j;
@@ -1180,6 +1186,7 @@ RAMC void chd_midi(uint32_t raw, uint32_t d1, uint32_t d2)   /* the original's o
         return;
     }
     if (status == 0x90u && d2 > 0) {
+        S.down[d1 >> 5] |= 1u << (d1 & 31u);
         S.prev_chord_still_held = S.held_count > 0;
         held_push((int)d1);
         switch (S.ctrl_source) {
@@ -1201,17 +1208,19 @@ RAMC void chd_midi(uint32_t raw, uint32_t d1, uint32_t d2)   /* the original's o
         }
     } else if (status == 0x80u || status == 0x90u) {
         int was_top;
+        S.down[d1 >> 5] &= ~(1u << (d1 & 31u));
         if (S.arp_enabled && S.arp_hold)
             return;
         was_top = held_pop((int)d1);
         if (S.arp_enabled) {
             if (S.held_count == 0)
-                chord_off((int)d1);
+                release_all_voices();         /* (the original released the key let go: the arp's last note, another
+                                               * key's or shifted, rang on) */
         } else if (was_top) {
             if (S.held_count > 0)
                 chord_on(S.held_notes[S.held_count - 1], 100);
             else
-                chord_off((int)d1);
+                release_all_voices();
         }
     } else if (status == 0xA0u) {
         if (S.held_count > 0 && (int)d1 == S.held_notes[S.held_count - 1]) {
@@ -1226,6 +1235,7 @@ RAMC void chd_midi(uint32_t raw, uint32_t d1, uint32_t d2)   /* the original's o
     } else if (status == 0xB0u) {
         if (d1 == 123u) {
             S.held_count = 0;
+            S.down[0] = S.down[1] = S.down[2] = S.down[3] = 0;
             release_all_voices();
         } else if (S.ctrl_source == CTRL_CC && (int)d1 == S.ctrl_cc) {
             S.ctrl_value_target = (float)d2 / 127.0f;
@@ -1280,6 +1290,7 @@ RAMC static void panic_now(void)
 {
     int i;
     S.held_count = 0;
+    S.down[0] = S.down[1] = S.down[2] = S.down[3] = 0;
     for (i = 0; i < NUM_VOICES; i++) {
         S.voices[i].active = 0;
         S.voices[i].env.stage = ENV_IDLE;
