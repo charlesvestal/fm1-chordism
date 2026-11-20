@@ -1626,7 +1626,7 @@ static void draw_main(void)
         else
             s_cat(t, "no clock");
         cv_text(10, 6, &FONT_L, t, bpm10 ? K_TEXT : K_DIM);
-        cv_text(10, 44, &FONT_S, set.snd.p[CP_ARP_SYNC] ? "the arp follows it" : "the arp keeps its own tempo",
+        cv_text(10, 44, &FONT_S, !set.snd.p[CP_ARP_SYNC] ? "the arp keeps its own tempo" : bpm10 ? "the arp follows it" : "own tempo till a clock comes",
                 K_DIM);
         for (int i = 0; i < 4; i++) {
             int lit = bpm10 && (int)(beat % 4u) == i && now - flash < 150u;

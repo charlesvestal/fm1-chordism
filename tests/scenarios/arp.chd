@@ -1,0 +1,34 @@
+# the arp: Trance Arp at its 1/8, then the Clock page's rate at 1/16 (twice the steps), then clock on MIDI with no
+# clock coming in (the arp keeps its own tempo, not stopped)
+wait 1500
+turn PRESET 13
+wait 300
+expect sound 14
+key 7 down
+wait 2000
+expect arpsteps >4
+expect arpsteps <9
+key 7 up
+wait 500
+tap ARP
+wait 30
+tap ARP
+wait 30
+tap ARP
+wait 30
+expect page 21
+turn K2 2
+wait 300
+key 7 down
+wait 2000
+expect arpsteps >16
+expect arpsteps <22
+key 7 up
+wait 500
+turn K1 1
+wait 300
+key 7 down
+wait 2000
+expect arpsteps >29
+key 7 up
+wait 300

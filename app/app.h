@@ -41,6 +41,11 @@ void app_say(const char *a, const char *b);   /* a short message on the screen a
 #define APP_REDRAW                       /* the screen mirror lost a part (or a viewer came): every band again */
 void app_redraw(void);
 
+/* the events mirror (device/mirror.c): a viewer running this build is given the state, then the events */
+#define APP_MIRROR_STATE
+uint32_t app_state_get(uint8_t *buf, uint32_t max);
+void app_state_set(const uint8_t *buf, uint32_t n);
+
 /* the host simulator's checks (app.c app_expect) */
 #define APP_HOST_EXPECT
 int app_expect(const char *what, int *got);

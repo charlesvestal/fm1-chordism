@@ -312,6 +312,8 @@ static struct {
     int arp_direction, arp_step_idx, arp_step_dir, arp_sample_counter, arp_step_period;
     int arp_clock_sync, arp_clock_division, arp_clock_count;
     uint8_t arp_clock_running;
+    uint32_t clock_age;                       /* samples since the last MIDI clock (synced: none for a while, the
+                                               * arp's own tempo instead) */
     uint32_t rng;
 } S;
 
@@ -319,7 +321,7 @@ volatile int8_t chd_sounding[4] = {-1, -1, -1, -1};
 volatile uint8_t chd_level[4];
 volatile uint8_t chd_held;
 volatile chd_live_t chd_live;
-volatile uint32_t chd_clock_ticks;         /* MIDI clocks in (0xF8) since the last start */
+volatile uint32_t chd_clock_ticks, chd_arp_steps;         /* MIDI clocks in (0xF8) since the last start */
 
 /* the original's rand() & 0xFFFF and rand(): a generator of its own (the sequence differs, the spread is the same) */
 RAMC static uint32_t rnd(void)
@@ -442,10 +444,13 @@ RAMC static void sweep_recompute(void)
         samples = 1.0f;
     S.sweep_coef = fm_expf(-5.0f / samples);
 }
+static const int CLOCKS_PER_STEP[6] = {24, 16, 12, 8, 6, 3};   /* 1/4, 1/4T, 1/8, 1/8T, 1/16, 1/32 */
+/* the arp's own clock: the original's step (a step each beat of the tempo) is the eighth note here, so the division
+ * sets the rate on the arp's own tempo too (the original's only on MIDI clock): 1/8, every factory sound's, as it was */
 RAMC static void arp_recompute(void)
 {
     float bpm = ARP_BPM_MIN + (ARP_BPM_MAX - ARP_BPM_MIN) * S.arp_tempo;
-    int p = (int)((60.0f / bpm) * SR);
+    int p = (int)((60.0f / bpm) * SR * (float)CLOCKS_PER_STEP[S.arp_clock_division % 6] / 12.0f);
     S.arp_step_period = p < 64 ? 64 : p;
 }
 RAMC static void arp_euclid_recompute(void)
@@ -657,7 +662,7 @@ RAMC static void set_param_(int p, int v)       /* audio interrupt: the original
     case CP_ARP_VINT: S.arp_variation_interval = v; break;
     case CP_ARP_VARS: S.arp_variations = v; break;
     case CP_ARP_SYNC: S.arp_clock_sync = v; break;
-    case CP_ARP_DIV: S.arp_clock_division = v; break;
+    case CP_ARP_DIV: S.arp_clock_division = v; arp_recompute(); break;
     case CP_CTRL_SRC: S.ctrl_source = v; S.ctrl_value = 0.0f; S.ctrl_value_target = 0.0f; break;
     case CP_CTRL_CC: S.ctrl_cc = v; break;
     case CP_CT_CUTOFF: S.ctrl_to_cutoff = u01(v); break;
@@ -1099,6 +1104,7 @@ RAMC static int held_pop(int note)              /* 1: it was the top of the stac
 
 RAMC static void arp_step_and_fire(void)
 {
+    chd_arp_steps++;
     int hc = S.held_count, fire;
     if (hc <= 0)
         return;
@@ -1140,6 +1146,9 @@ RAMC static void arp_step_and_fire(void)
 
 RAMC static float ctrl_from_pressure(void) { return S.vel_baseline + (1.0f - S.vel_baseline) * S.aftertouch; }
 
+/* the arp follows MIDI clock: asked to, and a clock is running and coming in (none for half a second: its own tempo) */
+RAMC static int arp_synced(void) { return S.arp_clock_sync && S.arp_clock_running && S.clock_age < (uint32_t)(SR / 2); }
+
 RAMC void chd_midi(uint32_t raw, uint32_t d1, uint32_t d2)   /* the original's on_midi */
 {
     uint32_t status = raw & 0xF0u;
@@ -1147,7 +1156,7 @@ RAMC void chd_midi(uint32_t raw, uint32_t d1, uint32_t d2)   /* the original's o
     d2 &= 0x7Fu;
     if (raw == 0xF8u) {                   /* MIDI clock: the arp, synced */
         chd_clock_ticks++;
-        static const int CLOCKS_PER_STEP[6] = {24, 16, 12, 8, 6, 3};
+        S.clock_age = 0;
         if (S.arp_enabled && S.arp_clock_sync && S.arp_clock_running && S.held_count > 0) {
             if (++S.arp_clock_count >= CLOCKS_PER_STEP[S.arp_clock_division < 6 ? S.arp_clock_division : 5]) {
                 S.arp_clock_count = 0;
@@ -1966,6 +1975,8 @@ RAMC static uint32_t chd_ticks(void) { return PLAT_FAR(plat_ticks24)(); }
 #endif
 RAMC static void render_block(float *out_l, float *out_r, uint32_t n)
 {
+    if (S.clock_age < 0x10000000u)
+        S.clock_age += n;
     float morph_idx_base = S.morph_index + S.ctrl_value * S.ctrl_to_morph * 0.5f;
     uint32_t at = 0;
     int vi;
@@ -1982,7 +1993,7 @@ RAMC static void render_block(float *out_l, float *out_r, uint32_t n)
         voice_gains(&S.voices[vi]);
     while (at < n) {
         uint32_t seg = n - at < SEGMAX ? n - at : SEGMAX;
-        if (S.arp_enabled && !S.arp_clock_sync && S.held_count > 0) {   /* the arp's tick at the segment's first
+        if (S.arp_enabled && !arp_synced() && S.held_count > 0) {   /* the arp's tick at the segment's first
                                                                           * sample; the segment ends before its next */
             if (--S.arp_sample_counter <= 0) {
                 S.arp_sample_counter = S.arp_step_period;

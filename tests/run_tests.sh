@@ -41,6 +41,7 @@ fi
 run host-build sh build.sh --host
 if command -v emcc >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
     run emu sh -c "sh build.sh --web && node tests/host/emu_test.mjs $B/emu/app.wasm"
+    run live-mirror node tests/host/live_test.mjs $B/host/chordism_host $B/emu/app.wasm
 else
     echo "  skip emu (no emcc)"
 fi

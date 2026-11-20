@@ -309,7 +309,7 @@ grind. With where, choose whether lo-fi comes after the filter or before it.
 | Knob | What it does |
 | --- | --- |
 | arp | Turns the arpeggiator on or off. PLAY does the same. |
-| tempo | Sets the speed, from 30 to 240 beats a minute. |
+| tempo | Sets the speed, from 15 to 120 beats a minute. The Clock page's rate sets how long each note is. |
 | order | Plays the keys you hold up, down, up and down, or at random. |
 | hold | With hold on, the arp goes on after you let go of the keys. |
 
@@ -321,8 +321,9 @@ up or down each time the pattern comes round, and repeats sets how many times it
 
 ![The Clock page](img/screen-clock.png "Clock")
 
-With clock set to MIDI, the arp follows the MIDI clock coming in, at the rate you choose. With own, it follows its
-tempo. The page shows the tempo of the clock coming in, and a dot lights on each beat.
+Use rate to set how long each arp note is, from a quarter note to a 32nd. With clock set to own, the arp plays at its
+tempo. With clock set to MIDI, it follows the MIDI clock coming in, and keeps its own tempo while no clock comes. The
+page shows the tempo of the clock coming in, and a dot lights on each beat.
 
 ### GLO: Morph, Pan morph, Control, Control 2, Setup and MIDI
 

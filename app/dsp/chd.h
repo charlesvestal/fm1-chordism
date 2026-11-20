@@ -203,4 +203,5 @@ typedef struct {
 } chd_live_t;
 extern volatile chd_live_t chd_live;     /* what moves now (written each block by the render) */
 extern volatile uint32_t chd_clock_ticks; /* MIDI clocks in since the last start (the Clock page's tempo) */
+extern volatile uint32_t chd_arp_steps;  /* the arp's steps so far (tests) */
 void chd_voicing(int root, int *notes);  /* the chord a key would play now: its four voices' notes (main loop) */

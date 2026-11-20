@@ -70,6 +70,70 @@ void app_frame(void)
 
 void app_redraw(void) { memset(ui.sig, 0, sizeof ui.sig); }   /* (each band's hash forgotten: all drawn again) */
 
+/* ---- the events mirror: the state a viewer starts from (the settings, the user sounds, where the UI is); the rest
+ * comes as events. The mirror's signature of it tells a viewer that drifted to ask again */
+typedef struct {
+    uint32_t magic;
+    settings_t set;
+    bank_t bank[2];
+    int16_t page, card, list, list_sel, list_top, list_n;
+    int16_t list_k[LIST_MAX];
+    uint8_t last[NB], voice, dirty, saving, save_pick;
+} mirror_state_t;
+#define MIRROR_MAGIC (0x4D530000u + (uint32_t)sizeof(mirror_state_t))   /* (another build: refused) */
+static uint32_t state_fill(mirror_state_t *m)
+{
+    memset(m, 0, sizeof *m);
+    m->magic = MIRROR_MAGIC;
+    m->set = set;
+    m->bank[0] = bank[0];
+    m->bank[1] = bank[1];
+    m->page = (int16_t)ui.page;
+    m->card = (int16_t)ui.card;
+    m->list = (int16_t)ui.list;
+    m->list_sel = (int16_t)ui.list_sel;
+    m->list_top = (int16_t)ui.list_top;
+    m->list_n = (int16_t)(ui.list ? ui.list_n : 0);
+    for (int i = 0; i < m->list_n && i < LIST_MAX; i++)
+        m->list_k[i] = ui.list_k[i];
+    memcpy(m->last, ui.last, sizeof m->last);
+    m->voice = ui.voice;
+    m->dirty = ui.dirty;
+    m->saving = ui.saving;
+    m->save_pick = ui.saving ? ui.save_pick : 0;
+    return sizeof *m;
+}
+uint32_t app_state_get(uint8_t *buf, uint32_t max)
+{
+    if (max < sizeof(mirror_state_t))
+        return 0;
+    return state_fill((mirror_state_t *)(void *)buf);   /* (buf: 4-byte aligned) */
+}
+void app_state_set(const uint8_t *buf, uint32_t n)
+{
+    const mirror_state_t *m = (const mirror_state_t *)(const void *)buf;
+    if (n != sizeof *m || m->magic != MIRROR_MAGIC)
+        return;
+    set = m->set;
+    bank[0] = m->bank[0];
+    bank[1] = m->bank[1];
+    ui.page = m->page;
+    ui.card = m->card;
+    ui.list = m->list;
+    ui.list_sel = m->list_sel;
+    ui.list_top = m->list_top;
+    ui.list_n = m->list_n;
+    memcpy(ui.list_k, m->list_k, sizeof ui.list_k);
+    memcpy(ui.last, m->last, sizeof ui.last);
+    ui.voice = m->voice;
+    ui.dirty = m->dirty;
+    ui.saving = m->saving;
+    ui.save_pick = m->save_pick;
+    while (chd_patch(&set.snd))
+        plat_ms();
+    memset(ui.sig, 0, sizeof ui.sig);
+}
+
 /* ---- the companion: the settings and the user sounds as files */
 int app_file_busy(void) { return 0; }
 void app_file_changed(uint32_t obj)
@@ -106,6 +170,8 @@ int app_expect(const char *what, int *got)
         *got = ui.saving;
     else if (!strcmp(what, "card"))
         *got = ui.card;
+    else if (!strcmp(what, "arpsteps"))
+        *got = (int)chd_arp_steps;
     else if (!strcmp(what, "held"))
         *got = chd_held;
     else if (!strncmp(what, "note", 4))      /* noteN: chord voice N's note (-1 none) */

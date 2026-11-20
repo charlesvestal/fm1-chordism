@@ -418,7 +418,7 @@ static void value_text(int k, int v, char *t)
         s_cat(num_i(st, t + (st > 0)), " st");
         return;
     }
-    case CP_ARP_TEMPO: s_cat(num_i((int32_t)(30.0f + 210.0f * u01v(v) + 0.5f), t), " bpm"); return;
+    case CP_ARP_TEMPO: s_cat(num_i((int32_t)(15.0f + 105.0f * u01v(v) + 0.5f), t), " bpm"); return;   /* (the original's 30..240 steps a minute are eighths: chd.c arp_recompute) */
     case CP_FENV_AMT:
         if (v > 0)
             *t = '+', t[1] = 0;
