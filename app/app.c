@@ -102,6 +102,8 @@ int app_expect(const char *what, int *got)
         *got = set.edited;
     else if (!strcmp(what, "list"))
         *got = ui.list;
+    else if (!strcmp(what, "saving"))
+        *got = ui.saving;
     else if (!strcmp(what, "card"))
         *got = ui.card;
     else if (!strcmp(what, "held"))

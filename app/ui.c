@@ -110,7 +110,8 @@ static struct {
     uint32_t touch_until;
     uint32_t sig[6];                     /* each band's last drawn content (a hash): drawn again only when it changed */
     uint32_t anim;                       /* the picture's last frame */
-    uint8_t save_used;                   /* SAVE held: a key took it (no save on its release) */
+    uint8_t save_used;                   /* SAVE's press already did something (no settings save on its release) */
+    uint8_t saving, save_pick;           /* the slots open (SAVE held a moment): the slot picked, 0..15 */
     uint32_t note_t;                     /* when a key last started a chord (the delay's picture) */
     uint8_t looking;                     /* REC: the Bluetooth devices' scan */
 } ui;
@@ -531,6 +532,10 @@ static void ble_device_say(void)
 
 static void button_down(int b)
 {
+    if (ui.saving && b != B_SAVE) {        /* the slots open: any other button closes them, nothing kept */
+        ui.saving = 0;
+        app_say("NOT SAVED", "");
+    }
     switch (b) {
     case B_HOME: case B_SEQ: case B_EDIT: case B_ENV: case B_LFO: case B_FX: case B_ARP: case B_GLO:
         page_button(b);
@@ -551,7 +556,14 @@ static void button_down(int b)
         break;
     case B_OCTDN: octave_step(-1); break;
     case B_OCTUP: octave_step(1); break;
-    case B_SAVE: ui.save_used = 0; break;
+    case B_SAVE:
+        ui.save_used = 0;
+        if (ui.saving) {                  /* the slots open: SAVE keeps the sound in the one picked */
+            ui.saving = 0;
+            ui.save_used = 1;
+            user_save(ui.save_pick);
+        }
+        break;
     default: break;
     }
 }
@@ -585,9 +597,14 @@ static void keys_input(void)
         uint32_t bit = 1u << k;
         if ((keys & bit) && !(ui.keys & bit)) {
             int note = key_note((int)k), v = set.velo ? (int)touch_vel(k) : 100, w = white_index((int)k);
-            if ((ui.btn >> B_SAVE & 1u) && w >= 0) {   /* SAVE held + white key: keep the sound there */
-                ui.save_used = 1;
-                user_save(w);
+            if (ui.saving) {               /* the slots open: a white key picks its slot (the keys don't play) */
+                if (w >= 0) {
+                    char t[8];
+                    ui.save_pick = (uint8_t)w;
+                    t[0] = 0;
+                    num_i(w + 1, s_cat(t, "U"));
+                    app_say("SLOT", t);
+                }
                 ui.key_note[k] = 0xFF;
                 continue;
             }
@@ -634,6 +651,18 @@ static void input(void)
         }
     }
     ui.btn = btn;
+    if (!ui.saving && (btn >> B_SAVE & 1u) && ui.btn_t[B_SAVE] && now - ui.btn_t[B_SAVE] >= 400u && !ui.save_used) {
+        ui.saving = 1;                     /* SAVE held: the slots open, on the sound's own or the first empty one */
+        ui.save_used = 1;                  /* (letting go of SAVE now saves nothing) */
+        ui.save_pick = 0;
+        if (set.sound >= SND_USER)
+            ui.save_pick = (uint8_t)(set.sound - SND_USER);
+        else
+            for (int i = NUSER - 1; i >= 0; i--)
+                if (!user_used(i))
+                    ui.save_pick = (uint8_t)i;
+        app_say("PICK A SLOT", "then press SAVE");
+    }
     /* a button held alone a second: its card (REC: Bluetooth off or on) */
     for (int b = 0; b < NB; b++)
         if ((btn >> b & 1u) && ui.btn_t[b] && now - ui.btn_t[b] >= 1000u && !ui.keys && !(btn & ~(1u << b))) {
@@ -726,8 +755,19 @@ static void input(void)
             if (n >= 0 && k >= 0 && k < NKEYS && chd_level[i] > 20)
                 lk |= 1u << k;
         }
+        if (ui.saving) {                   /* the slots: lit where a sound is kept, the one picked blinking */
+            static const uint8_t WK[16] = PLAT_WHITE_KEYS;
+            lk = 0;
+            for (int i = 0; i < NUSER; i++)
+                if ((user_used(i) && i != ui.save_pick) || (i == ui.save_pick && (now / 150u) % 2u == 0u))
+                    lk |= 1u << WK[i];
+            lb = 1u << B_SAVE;
+            plat_glow(0);
+            plat_leds(lb, lk);
+        } else {
         plat_glow(set.lights == 0);
         plat_leds(set.lights == 2 ? 0u : lb, set.lights == 2 ? ui.keys : lk);
+        }
     }
 }
 
@@ -845,10 +885,11 @@ static void draw_header(void)
 /* the title strip, over the knobs: the button, the page's name, a dot for each of the button's pages (this one lit) */
 static void draw_title(void)
 {
-    const char *bn = ui.list ? "SEL" : BTN_LABEL[PAGE[ui.page].btn];
-    int first, n = page_n(PAGE[ui.page].btn, &first);
+    const char *bn = ui.saving ? "SAVE" : ui.list ? "SEL" : BTN_LABEL[PAGE[ui.page].btn];
+    const char *pn = ui.saving ? "Slots" : PAGE[ui.page].name;
+    int first, n = ui.saving ? 0 : page_n(PAGE[ui.page].btn, &first);
     int32_t w = text_w(&FONT_XS, bn) + 6, x;
-    uint32_t h = hash_u(0x7171u, (uint32_t)ui.page | (uint32_t)ui.list << 8);
+    uint32_t h = hash_u(0x7171u, (uint32_t)ui.page | (uint32_t)ui.list << 8 | (uint32_t)ui.saving << 10);
     if (h == ui.sig[3])
         return;
     ui.sig[3] = h;
@@ -856,7 +897,7 @@ static void draw_title(void)
     cv_round(8, 1, w, 15, 3, K_DIM);
     cv_round(9, 2, w - 2, 13, 2, K_BG);
     cv_text(11, cap_y(1, 15, &FONT_XS) - 1, &FONT_XS, bn, K_DIM);
-    x = cv_text(8 + w + 6, cap_y(0, TTL_H, &FONT_B) - 1, &FONT_B, PAGE[ui.page].name, K_TEXT) + 7;
+    x = cv_text(8 + w + 6, cap_y(0, TTL_H, &FONT_B) - 1, &FONT_B, pn, K_TEXT) + 7;
     for (int i = 0; n > 1 && i < n; i++)
         cv_round(x + i * 8, 6, 5, 5, 2, first + i == ui.page ? K_TEXT : K_LINE);
     cv_blit(0, TTL_Y);
@@ -868,7 +909,17 @@ static void draw_knobs(void)
     char v[4][24];
     const char *nm[4];
     int hot = plat_ms() < ui.touch_until ? ui.touched : -1, lo, hi;
-    uint32_t h = hash_u(2166136261u, (uint32_t)ui.page | (uint32_t)(hot + 1) << 8 | (uint32_t)ui.voice << 16);
+    uint32_t h = hash_u(2166136261u, (uint32_t)ui.page | (uint32_t)(hot + 1) << 8 | (uint32_t)ui.voice << 16 |
+                                     (uint32_t)ui.saving << 24);
+    if (ui.saving) {                       /* (the slots: the knobs set nothing, their panel empty) */
+        if (h != ui.sig[2]) {
+            ui.sig[2] = h;
+            cv_begin(240, KNB_H, K_BG);
+            cv_round(4, 0, 232, KNB_H - 2, 6, K_PANEL);
+            cv_blit(0, KNB_Y);
+        }
+        return;
+    }
     for (int i = 0; i < 4; i++) {
         int k = PAGE[ui.page].k[i];
         nm[i] = k == K_NONE ? 0 : knob_name(k);
@@ -947,11 +998,15 @@ static void draw_footer(void)
 {
     const char *l1[4], *l2[4];
     int pr = PAGE[ui.page].preset;
-    uint32_t h = hash_u(2166136261u, (uint32_t)ui.page | (uint32_t)ui.list << 8 | (uint32_t)(ui.card != 0) << 9);
+    uint32_t h = hash_u(2166136261u, (uint32_t)ui.page | (uint32_t)ui.list << 8 | (uint32_t)(ui.card != 0) << 9 |
+                                     (uint32_t)ui.saving << 10);
     if (h == ui.sig[4])
         return;
     ui.sig[4] = h;
-    if (ui.list == 2) {
+    if (ui.saving) {
+        l1[0] = "KEYS", l1[1] = "save slot", l1[2] = "SAVE", l1[3] = "keep";
+        l2[0] = "HOME", l2[1] = "cancel", l2[2] = 0, l2[3] = 0;
+    } else if (ui.list == 2) {
         l1[0] = "SELECT", l1[1] = "next sound", l1[2] = "KEYS", l1[3] = "play";
         l2[0] = "SEL", l2[1] = "close", l2[2] = "SAVE", l2[3] = "keep";
     } else if (ui.list) {
@@ -966,7 +1021,7 @@ static void draw_footer(void)
     }
     cv_begin(240, 32, K_BG);
     hint_line(0, l1, 2);
-    hint_line(16, l2, 2);
+    hint_line(16, l2, l2[2] ? 2 : 1);
     cv_blit(0, FOOT_Y);
 }
 
@@ -1746,28 +1801,33 @@ static void draw_card(void)
 /* SAVE held: the 16 slots (the white keys), what each holds, and what pressing one does */
 static void draw_slots(void)
 {
-    char t[40];
-    uint32_t h = hash_u(0x5A5Eu, (uint32_t)set.sound);
+    char t[48], n[24];
+    uint32_t h = hash_u(0x5A5Eu, (uint32_t)set.sound | (uint32_t)ui.save_pick << 8);
+    int pick = ui.save_pick;
     for (int i = 0; i < NUSER; i++)
         h = hash_u(h, (uint32_t)user_used(i));
     if (h == ui.sig[1])
         return;
     ui.sig[1] = h;
     cv_begin(240, MAIN_H, K_BG);
+    t[0] = 0;                             /* (the sound is in the header: here, where it goes) */
+    num_i(pick + 1, s_cat(t, "keep it in U"));
+    text_fit(8, 2, &FONT_B, t, 224, INK[0]);
     t[0] = 0;
-    sound_name(set.sound, s_cat(t, ""));
-    cv_text(8, 2, &FONT_XS, "press a white key to keep", K_DIM);
-    text_fit(8, 15, &FONT_B, t, 224, INK[0]);
+    if (user_used(pick))
+        s_put(t, sizeof t, "replacing ", bank[pick / 8].s[pick % 8].name, 0, 0);
+    else
+        s_cat(t, "an empty slot");
+    text_fit(8, 20, &FONT_XS, t, 224, K_DIM);
     for (int i = 0; i < NUSER; i++) {
-        int32_t x = 6 + (i % 4) * 57, y = 36 + (i / 4) * 20;
-        int used = user_used(i);
-        char n[24];
-        cv_round(x, y, 54, 18, 4, used ? K_PANEL2 : K_PANEL);
+        int32_t x = 6 + (i % 4) * 57, y = 38 + (i / 4) * 19;
+        int used = user_used(i), on = i == pick;
+        cv_round(x, y, 54, 17, 4, on ? K_TEXT : used ? K_PANEL2 : K_PANEL);
         n[0] = 0;
         num_i(i + 1, n);
-        cv_text(x + 4, cap_y(y, 18, &FONT_XS), &FONT_XS, n, K_DIM);
-        text_fit(x + 18, cap_y(y, 18, &FONT_XS), &FONT_XS, used ? bank[i / 8].s[i % 8].name : "empty", 34,
-                 used ? K_TEXT : K_FAINT);
+        cv_text(x + 4, cap_y(y, 17, &FONT_XS), &FONT_XS, n, on ? K_BG : K_DIM);
+        text_fit(x + 18, cap_y(y, 17, &FONT_XS), &FONT_XS, used ? bank[i / 8].s[i % 8].name : "empty", 34,
+                 on ? K_BG : used ? K_TEXT : K_FAINT);
     }
     cv_blit(0, MAIN_Y);
 }
@@ -1775,7 +1835,7 @@ static void draw_slots(void)
 static void draw(void)
 {
     draw_header();
-    if ((ui.btn >> B_SAVE & 1u) && ui.btn_t[B_SAVE] + 250u <= plat_ms() && !ui.list) {   /* (SAVE held a moment) */
+    if (ui.saving) {                       /* the slots open */
         draw_slots();
         draw_title();
         draw_knobs();

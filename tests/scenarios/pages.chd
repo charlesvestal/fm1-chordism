@@ -54,13 +54,26 @@ expect sound 3
 tap SEL
 wait 50
 expect list 0
-# SAVE held: the slots; a white key keeps the sound there, and letting go then saves nothing more
+# SAVE held: the slots open; a white key picks one (and doesn't play), SAVE keeps the sound there; another button
+# closes them, nothing kept
 press SAVE
-wait 400
-key 0 down
-wait 50
-key 0 up
-expect user0 1
-expect sound 57
+wait 500
 release SAVE
 wait 50
+expect saving 1
+key 2 down
+wait 50
+key 2 up
+expect user1 0
+tap SAVE
+wait 50
+expect user1 1
+expect sound 58
+expect saving 0
+press SAVE
+wait 500
+release SAVE
+tap EDIT
+wait 50
+expect saving 0
+expect user0 0

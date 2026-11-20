@@ -454,7 +454,7 @@ static const struct { uint8_t btn; const char *title, *l1, *l2; } CARD[] = {
     {B_SEL, "Lists", "Every setting of this button, the hidden ones too. On HOME, every sound.",
      "Turn SELECT to move, ALGORITHM to change it. Press SEL to leave."},
     {B_SAVE, "Save", "Tap to keep this sound and your settings for the next start.",
-     "Hold SAVE to see your 16 slots, and press a white key to keep the sound there."},
+     "Hold it to open your 16 slots, press a white key to pick one, then tap SAVE."},
     {B_PLAY, "Arp", "Press to turn the arp on or off.", 0},
     {B_REC, "Bluetooth", "Press to look for Bluetooth MIDI devices, again to connect.",
      "Hold for a second to turn Bluetooth off or on."},

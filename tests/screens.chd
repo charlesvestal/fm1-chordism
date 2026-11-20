@@ -102,8 +102,10 @@ tap SEL
 wait 300
 press SAVE
 wait 600
-shot screen-slots.png
 release SAVE
+wait 1500
+shot screen-slots.png
+tap HOME
 wait 1500
 key 7 up
 wait 300

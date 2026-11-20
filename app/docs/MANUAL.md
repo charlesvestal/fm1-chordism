@@ -128,11 +128,12 @@ found the one you want.
 Changes you make to a sound play at once. Press SAVE to keep the sound as it is now, with your settings, for the
 next time you switch on the FM-1. SAVE is lit while there are changes to save.
 
-To keep a sound in one of your own slots, hold SAVE. The screen shows your 16 slots and what each one holds. Press a
-white key, 1 to 16, to keep the sound in that slot. It then appears after the factory sounds as U1 to U16. If you let
-go of SAVE without pressing a key, nothing is kept.
+To keep a sound in one of your own slots, hold SAVE for a moment. The screen shows your 16 slots and what each one
+holds, and the white keys light up: the keys of the slots you've filled stay lit, and the slot you're on blinks.
+Press a white key to choose its slot, and the screen tells you what it would replace. Then tap SAVE to keep the sound
+there. It appears after the factory sounds as U1 to U16. To leave without keeping it, press HOME or any other button.
 
-![SAVE held: the 16 slots, with the sound to keep above them](img/screen-slots.png "Keeping a sound")
+![The slots: the one picked, what it would replace, the 16 slots below](img/screen-slots.png "Keeping a sound")
 
 ---
 
