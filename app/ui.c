@@ -705,7 +705,8 @@ static void draw_header(void)
 {
     int msg = plat_ms() < ui.msg_until, batt = plat_battery();
     uint32_t h = hash_u(hash_u(2166136261u, (uint32_t)ui.page | (uint32_t)msg << 8 | (uint32_t)ui.dirty << 9 |
-                                               (uint32_t)ui.list << 10), (uint32_t)(batt + 1));
+                                               (uint32_t)ui.list << 10 | (uint32_t)set.edited << 11 |
+                                               (uint32_t)set.sound << 16), (uint32_t)(batt + 1));
     if (msg)
         h = hash_s(hash_s(h, ui.msg[0]), ui.msg[1]);
     if (h == ui.sig[0])
@@ -733,8 +734,21 @@ static void draw_header(void)
             draw_batt(r, batt);
             r -= 6;
         }
-        if (ui.dirty)
-            cv_text(r - text_w(&FONT_XS, "unsaved"), 5, &FONT_XS, "unsaved", K_DIM);
+        {   /* the sound, on every page: its number and name ("*" changed since it was picked), a dot before it while
+             * the settings are unsaved */
+            char nm[32];
+            int32_t left = 8 + w + 6 + text_w(&FONT_B, PAGE[ui.page].name) + 10, room, nw;
+            sound_name(set.sound, nm);
+            if (set.edited)
+                s_cat(nm, "*");
+            room = r - left - (ui.dirty ? 9 : 0);
+            nw = text_w(&FONT_S, nm) < room ? text_w(&FONT_S, nm) : room;
+            if (room > 20) {
+                text_fit(r - nw, 4, &FONT_S, nm, room, INK[0]);
+                if (ui.dirty)
+                    cv_round(r - nw - 8, 10, 5, 5, 2, K_DIM);
+            }
+        }
     }
     cv_blit(0, 0);
 }
@@ -746,10 +760,7 @@ static void draw_tag(void)
     int first, n = page_n(PAGE[ui.page].btn, &first);
     int32_t r = 232, x;
     uint32_t h;
-    sound_name(set.sound, t);
-    if (set.edited)
-        s_cat(t, "*");
-    s_cat(t, " > ");
+    t[0] = 0;                             /* (the chord; the sound is in the header) */
     if (ui.page == P_MAP)
         s_cat(s_cat(t, NOTE_NAME[set.map_pc]), " chord");
     else
