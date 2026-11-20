@@ -1,0 +1,32 @@
+# Chordism's build settings (fm1-base's tools/build.py: ./build.sh)
+name = "CHORDISM"              # the build's files: chordism.fwsc, chordism-X.Y.fwsc
+id_prefix = "FM-1_15"          # package identity: dev FM-1_1500, releases FM-1_15XXYYZZ
+usb_manufacturer = "Chordism"
+usb_product = "Chordism FM-1"
+ble = true                     # Bluetooth MIDI with a computer
+ble_stack = "own"              # Optimist's stack (fm1-base bt/)
+ble_central = true             # and the FM-1 connects to Bluetooth MIDI devices too
+usb_audio_in = true            # the sound recordable over USB
+companion = true               # the settings and the user sounds as files for a page
+mirror = true                  # the screen and the panel on a computer over USB
+words = "words.tsv"
+include = ["dsp"]
+o2 = ["dsp/chd.c"]             # the engine, at -O2
+# LOOM-8's faces (tools/gen_font.py: Barlow, SIL OFL 1.1)
+gen = ["../tools/gen_font.py {gen}/loom_font.h"]
+# the site
+tagline = "one key in, a chord out"
+repo = "https://github.com/charlesvestal/fm1-chordism"
+licence = "MPL-2.0"
+credits = "Chordism, the Schwung module (MIT). Built on fm1-base and felucca-bsp, from Felucca by Leo Kuroshita (Hügelton Instruments). Bluetooth: Optimist's stack by Henri David (MPL-2.0). Fonts: Barlow (SIL OFL 1.1)."
+
+# firmware.json, for firmware hubs (fm1-base docs/FIRMWARE-JSON.md)
+author = "Charles Vestal"
+description = "Chordism turns the M-VAVE FM-1 into a chord synth. Each key plays a four-voice chord, from sixteen chord types, your own intervals, or a chord for each note of the scale. The sound runs through morphing levels and pans, FM, a filter that opens as you press harder, lo-fi, a delay and a plate reverb, with an arpeggiator on top. It comes with the Chordism module's 57 sounds and 16 slots for your own."
+tags = ["synth"]
+install = "https://charlesvestal.github.io/fm1-chordism/install/"
+site = "https://charlesvestal.github.io/fm1-chordism/"
+screenshot = "app/docs/img/screen-chord.png"
+ram_code_allow = ["chd_render", "seg_voices"]   # the second core's calls (plat_cpu2_*: fm1-base, in the flash; the
+                               # render never runs with the flash off), and CHD_PROF's timer (a measurement build)
+cpu2 = true                    # the second core renders half the voices

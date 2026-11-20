@@ -1,0 +1,51 @@
+# a first look and listen: boot, a chord, the pages
+wait 700
+shot boot.png
+expect page 0
+expect sound 1
+master 4096
+wav first.wav
+key 7 down
+wait 400
+expect note0 60
+expect note1 64
+shot chord.png
+key 7 up
+wait 1500
+wavstop
+expect peak_db_max -0.5
+expect peak_db_min -30
+tap EDIT
+wait 100
+shot osc.png
+tap ENV
+wait 30
+tap ENV
+wait 100
+shot filter.png
+tap SEQ
+wait 100
+shot scale.png
+tap SEQ
+wait 100
+shot map.png
+tap LFO
+wait 100
+shot lfo.png
+tap FX
+wait 100
+shot plate.png
+tap ARP
+wait 100
+shot arp.png
+tap GLO
+wait 100
+shot morph.png
+tap SEL
+wait 100
+shot list.png
+tap SEL
+press ENV
+wait 1200
+shot card.png
+release ENV

@@ -1,0 +1,1 @@
+8385c04 Fix: serialize slot state so patches survive set loads

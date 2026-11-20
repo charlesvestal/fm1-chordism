@@ -1,0 +1,7 @@
+build/
+app/build/
+.DS_Store
+__pycache__/
+*.o
+.serena/
+app/web/words/

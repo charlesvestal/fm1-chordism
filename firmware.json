@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "chordism",
+  "name": "Chordism",
+  "author": "Charles Vestal",
+  "license": "MPL-2.0",
+  "tagline": "one key in, a chord out",
+  "description": "Chordism turns the M-VAVE FM-1 into a chord synth. Each key plays a four-voice chord, from sixteen chord types, your own intervals, or a chord for each note of the scale. The sound runs through morphing levels and pans, FM, a filter that opens as you press harder, lo-fi, a delay and a plate reverb, with an arpeggiator on top. It comes with the Chordism module's 57 sounds and 16 slots for your own.",
+  "tags": ["synth"],
+  "install": "https://charlesvestal.github.io/fm1-chordism/install/",
+  "site": "https://charlesvestal.github.io/fm1-chordism/",
+  "source": "https://github.com/charlesvestal/fm1-chordism",
+  "hardware": {
+    "models": ["FM-1"],
+    "flash": ["856014", "B36014"],
+    "features": ["bluetooth-midi", "bluetooth-midi-devices", "usb-audio-in", "usb-audio-out", "second-core", "velocity", "pressure", "screen-reader", "screen-mirror", "companion"]
+  },
+  "credits": "Chordism, the Schwung module (MIT). Built on fm1-base and felucca-bsp, from Felucca by Leo Kuroshita (Hügelton Instruments). Bluetooth: Optimist's stack by Henri David (MPL-2.0). Fonts: Barlow (SIL OFL 1.1)."
+}
