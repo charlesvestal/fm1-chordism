@@ -914,7 +914,9 @@ static void curtain(float cx, float half, float level, uint16_t ink, float t, fl
         hgt = (int32_t)(level * env * (40.0f + 34.0f * (0.5f + 0.5f * fm_sin_turns((float)x * 0.02f + t * 0.13f + seed * 3.0f))));
         a0 = (int32_t)(200.0f * env * (0.6f + 0.4f * level));
         for (y = 0; y <= hgt; y++) {                 /* bright at the foot, fading upward (the square of the way up) */
-            int32_t k = hgt - y, a = a0 * k / (hgt + 1) * k / (hgt + 1);
+            int32_t k = hgt - y, a = (a0 * k / (hgt + 1) * k / (hgt + 1)) & ~31;   /* (in steps of 32: the colours
+                                                                                         * repeat, the mirror's code
+                                                                                         * keeps them small) */
             cv_blend(x, foot - y, ink, (uint32_t)a);
             cv_blend(x + 1, foot - y, ink, (uint32_t)a);
         }
